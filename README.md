@@ -217,4 +217,17 @@ If you find this repo useful for your research, please cite the paper
   year={2025}
 }
 
+@article{zhang2025d,
+title={D²-VPR: A Parameter-efficient Visual-foundation-model-based Visual Place Recognition Method via Knowledge Distillation and Deformable Aggregation},
+volume={40},
+url={https://ojs.aaai.org/index.php/AAAI/article/view/38303},
+DOI={10.1609/aaai.v40i15.38303},
+number={15},
+journal={Proceedings of the AAAI Conference on Artificial Intelligence},
+author={Zhang, Zheyuan and Zhang, Jiwei and Zhou, Boyu and Duan, Linzhimeng and Chen, Hong},
+year={2026},
+month={Mar.},
+pages={13034-13042}
+}
+
 ```
