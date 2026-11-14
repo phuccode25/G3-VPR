@@ -39,7 +39,7 @@ The test dataset should be organized in a directory tree as such:
 
 Before we begin, please download the CricaVPR weights [LINK](https://drive.google.com/file/d/171lCcxZFFnvEvo88ntIwELeBegcMTEJs/view) and Dinov2-small weights [LINK](https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth).
 
-Please use the following code for distillation:
+Please use the following code for distillation (Please note that evaluation on the SPED and Pitts30k test sets in the script is for monitoring purposes only; the results are not used for parameter selection):
 
 ```bash
 python distillation.py
