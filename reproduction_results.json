@@ -1,0 +1,259 @@
+{
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU",
+    "torch": "2.6.0+cu124",
+    "cuda": "12.4",
+    "faiss": "1.16.0"
+  },
+  "parameters": {
+    "d2vpr_encoder_breakdown_M": {
+      "backbone_base": 22.0558,
+      "adapter": 2.2956,
+      "drm_lin": 1.1804,
+      "drm_up_norm": 0.0015,
+      "tdda_offset_generator": 0.789,
+      "tdda_topdown_fusion": 0.7895,
+      "tdda_pos_encoder": 0.0997,
+      "tdda_aggregation": 0.0,
+      "cross_image_encoder": 11.028,
+      "other": 0.0,
+      "drm_total": 1.182,
+      "tdda_total": 1.6782
+    },
+    "d2vpr_encoder_total_M": 38.2396,
+    "d2vpr_no_encoder_total_M": 27.2116,
+    "teacher_cricavpr_total_M": 106.7617,
+    "teacher_cricavpr_backbone_with_adapter_M": 95.7337,
+    "param_reduction_encoder_vs_cricavpr_pct": 64.18,
+    "param_reduction_no_encoder_vs_cricavpr_pct": 74.51
+  },
+  "retrieval": [
+    {
+      "name": "D2VPR_no_encoder_SPED_bs32",
+      "checkpoint": "finetune_no_encoder.pth",
+      "dataset": "sped",
+      "batch_size": 32,
+      "cross_image_encoder": false,
+      "db_num": 607,
+      "queries_num": 607,
+      "R@1": 86.0,
+      "R@5": 93.25,
+      "R@10": 94.73,
+      "recalls_str": "R@1: 86.0, R@5: 93.2, R@10: 94.7",
+      "wall_time_s": 31.488,
+      "paper_ref": {
+        "table": "Table 8 (no PCA)",
+        "R@1": 86.2,
+        "R@5": 93.2
+      }
+    },
+    {
+      "name": "D2VPR_no_encoder_AmsterTime_bs32",
+      "checkpoint": "finetune_no_encoder.pth",
+      "dataset": "amstertime",
+      "batch_size": 32,
+      "cross_image_encoder": false,
+      "db_num": 1231,
+      "queries_num": 1231,
+      "R@1": 49.23,
+      "R@5": 70.27,
+      "R@10": 75.47,
+      "recalls_str": "R@1: 49.2, R@5: 70.3, R@10: 75.5",
+      "wall_time_s": 70.426,
+      "paper_ref": {
+        "table": "Table 8 (no PCA)",
+        "R@1": 49.1,
+        "R@5": 70.3
+      }
+    },
+    {
+      "name": "D2VPR_encoder_SPED_bs3",
+      "checkpoint": "distillation.pth",
+      "dataset": "sped",
+      "batch_size": 3,
+      "cross_image_encoder": true,
+      "db_num": 607,
+      "queries_num": 607,
+      "R@1": 91.43,
+      "R@5": 96.38,
+      "R@10": 97.36,
+      "recalls_str": "R@1: 91.4, R@5: 96.4, R@10: 97.4",
+      "wall_time_s": 47.054,
+      "paper_ref": {
+        "table": "Table 9 (no PCA)",
+        "R@1": 91.3,
+        "R@5": 96.2
+      }
+    },
+    {
+      "name": "D2VPR_encoder_SPED_bs1",
+      "checkpoint": "distillation.pth",
+      "dataset": "sped",
+      "batch_size": 1,
+      "cross_image_encoder": true,
+      "db_num": 607,
+      "queries_num": 607,
+      "R@1": 80.4,
+      "R@5": 89.29,
+      "R@10": 91.76,
+      "recalls_str": "R@1: 80.4, R@5: 89.3, R@10: 91.8",
+      "wall_time_s": 115.475,
+      "paper_ref": {
+        "table": "Table 8 (no PCA)",
+        "R@1": 83.2,
+        "R@5": 91.4
+      }
+    },
+    {
+      "name": "D2VPR_encoder_AmsterTime_bs8",
+      "checkpoint": "distillation.pth",
+      "dataset": "amstertime",
+      "batch_size": 8,
+      "cross_image_encoder": true,
+      "db_num": 1231,
+      "queries_num": 1231,
+      "R@1": 63.04,
+      "R@5": 80.67,
+      "R@10": 85.3,
+      "recalls_str": "R@1: 63.0, R@5: 80.7, R@10: 85.3",
+      "wall_time_s": 59.943,
+      "paper_ref": {
+        "table": "Table 9 (no PCA)",
+        "R@1": 62.9,
+        "R@5": 80.7
+      }
+    },
+    {
+      "name": "D2VPR_encoder_AmsterTime_bs1",
+      "checkpoint": "distillation.pth",
+      "dataset": "amstertime",
+      "batch_size": 1,
+      "cross_image_encoder": true,
+      "db_num": 1231,
+      "queries_num": 1231,
+      "R@1": 38.59,
+      "R@5": 59.22,
+      "R@10": 67.26,
+      "recalls_str": "R@1: 38.6, R@5: 59.2, R@10: 67.3",
+      "wall_time_s": 284.064,
+      "paper_ref": {
+        "table": "Table 8 (no PCA)",
+        "R@1": 48.7,
+        "R@5": 69.6
+      }
+    },
+    {
+      "name": "D2VPR_encoder_finetune_SPED_bs1",
+      "checkpoint": "finetune.pth",
+      "dataset": "sped",
+      "batch_size": 1,
+      "cross_image_encoder": true,
+      "db_num": 607,
+      "queries_num": 607,
+      "R@1": 83.0,
+      "R@5": 91.8,
+      "R@10": 93.7,
+      "recalls_str": "R@1: 83.0, R@5: 91.8, R@10: 93.7",
+      "wall_time_s": null,
+      "paper_ref": {
+        "table": "Table 8 (no PCA)",
+        "R@1": 83.2,
+        "R@5": 91.4
+      }
+    },
+    {
+      "name": "D2VPR_encoder_finetune_SPED_bs3",
+      "checkpoint": "finetune.pth",
+      "dataset": "sped",
+      "batch_size": 3,
+      "cross_image_encoder": true,
+      "db_num": 607,
+      "queries_num": 607,
+      "R@1": 88.5,
+      "R@5": 94.1,
+      "R@10": 95.4,
+      "recalls_str": "R@1: 88.5, R@5: 94.1, R@10: 95.4",
+      "wall_time_s": null,
+      "paper_ref": {
+        "table": "Table 9 (distillation.pth ref)",
+        "R@1": 91.3,
+        "R@5": 96.2
+      }
+    },
+    {
+      "name": "D2VPR_encoder_finetune_AmsterTime_bs1",
+      "checkpoint": "finetune.pth",
+      "dataset": "amstertime",
+      "batch_size": 1,
+      "cross_image_encoder": true,
+      "db_num": 1231,
+      "queries_num": 1231,
+      "R@1": 48.5,
+      "R@5": 69.5,
+      "R@10": 76.1,
+      "recalls_str": "R@1: 48.5, R@5: 69.5, R@10: 76.1",
+      "wall_time_s": null,
+      "paper_ref": {
+        "table": "Table 8 (no PCA)",
+        "R@1": 48.7,
+        "R@5": 69.6
+      }
+    },
+    {
+      "name": "D2VPR_encoder_finetune_AmsterTime_bs8",
+      "checkpoint": "finetune.pth",
+      "dataset": "amstertime",
+      "batch_size": 8,
+      "cross_image_encoder": true,
+      "db_num": 1231,
+      "queries_num": 1231,
+      "R@1": 56.2,
+      "R@5": 76.9,
+      "R@10": 82.0,
+      "recalls_str": "R@1: 56.2, R@5: 76.9, R@10: 82.0",
+      "wall_time_s": null,
+      "paper_ref": {
+        "table": "Table 9 (distillation.pth ref)",
+        "R@1": 62.9,
+        "R@5": 80.7
+      }
+    }
+  ],
+  "latency_and_vram": {
+    "dataset": "amstertime",
+    "total_images": 2462,
+    "batch_size": 32,
+    "feature_dim": 10752,
+    "feature_extraction_time_s": 48.356,
+    "faiss_index_and_search_time_s": 0.3025,
+    "total_inference_time_s": 48.659,
+    "throughput_img_per_s": 50.91,
+    "peak_vram_allocated_MB": 380.84,
+    "peak_vram_reserved_MB": 510.0
+  },
+  "training_smoke": {
+    "stage1_distillation_smoke": {
+      "batch_size": 4,
+      "output_shape": [
+        4,
+        10752
+      ],
+      "loss": 0.000187,
+      "loss_finite": true,
+      "total_grad_norm": 0.0005,
+      "peak_vram_allocated_MB": 835.26
+    },
+    "stage2_finetune_smoke": {
+      "batch_size": 4,
+      "trainable_params_M": 10.7263,
+      "output_shape": [
+        4,
+        10752
+      ],
+      "loss": 1.205351,
+      "loss_finite": true,
+      "total_grad_norm": 3.2861,
+      "peak_vram_allocated_MB": 444.06
+    }
+  }
+}

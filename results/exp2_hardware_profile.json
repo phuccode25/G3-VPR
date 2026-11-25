@@ -1,0 +1,324 @@
+{
+  "batch_invariance": {
+    "d2vpr_bs1_vs_bs16_max_abs_diff": 0.011249,
+    "d2vpr_bs1_vs_bs16_mean_cosine": 0.997133,
+    "g3vpr_bs1_vs_bs16_max_abs_diff": 1.9e-07,
+    "g3vpr_bs1_vs_bs16_mean_cosine": 1.0
+  },
+  "dynamic_resolution_and_matryoshka": {
+    "224x224": {
+      "salience_shape": [
+        2,
+        1,
+        16,
+        16
+      ],
+      "mu_shape": [
+        2,
+        16,
+        2
+      ],
+      "matryoshka_dims": {
+        "128": [
+          [
+            2,
+            128
+          ],
+          1.0
+        ],
+        "256": [
+          [
+            2,
+            256
+          ],
+          1.0
+        ],
+        "512": [
+          [
+            2,
+            512
+          ],
+          1.0
+        ],
+        "1024": [
+          [
+            2,
+            1024
+          ],
+          1.0
+        ],
+        "2048": [
+          [
+            2,
+            2048
+          ],
+          1.0
+        ],
+        "4096": [
+          [
+            2,
+            4096
+          ],
+          1.0
+        ]
+      }
+    },
+    "322x322": {
+      "salience_shape": [
+        2,
+        1,
+        23,
+        23
+      ],
+      "mu_shape": [
+        2,
+        16,
+        2
+      ],
+      "matryoshka_dims": {
+        "128": [
+          [
+            2,
+            128
+          ],
+          1.0
+        ],
+        "256": [
+          [
+            2,
+            256
+          ],
+          1.0
+        ],
+        "512": [
+          [
+            2,
+            512
+          ],
+          1.0
+        ],
+        "1024": [
+          [
+            2,
+            1024
+          ],
+          1.0
+        ],
+        "2048": [
+          [
+            2,
+            2048
+          ],
+          1.0
+        ],
+        "4096": [
+          [
+            2,
+            4096
+          ],
+          1.0
+        ]
+      }
+    },
+    "378x280": {
+      "salience_shape": [
+        2,
+        1,
+        27,
+        20
+      ],
+      "mu_shape": [
+        2,
+        16,
+        2
+      ],
+      "matryoshka_dims": {
+        "128": [
+          [
+            2,
+            128
+          ],
+          1.0
+        ],
+        "256": [
+          [
+            2,
+            256
+          ],
+          1.0
+        ],
+        "512": [
+          [
+            2,
+            512
+          ],
+          1.0
+        ],
+        "1024": [
+          [
+            2,
+            1024
+          ],
+          1.0
+        ],
+        "2048": [
+          [
+            2,
+            2048
+          ],
+          1.0
+        ],
+        "4096": [
+          [
+            2,
+            4096
+          ],
+          1.0
+        ]
+      }
+    }
+  },
+  "amp_training_smoke": {
+    "warmstart_loaded": true,
+    "train_batch_images": 16,
+    "total_loss": 2.6794,
+    "loss_ms": 1.7882,
+    "loss_rel_2d": 0.47,
+    "loss_3d": 0.3725,
+    "loss_proto": 0.0,
+    "grad_norm": 0.8749,
+    "peak_train_vram_bs16_MB": 1414.39
+  },
+  "ablation_parameter_breakdowns_M": {
+    "M1": {
+      "vit_base": 22.0558,
+      "vit_adapters": 2.2956,
+      "gated_drm_and_3d_head": 0.788,
+      "gaussian_aggregator_3d_dgsa": 0.9957,
+      "prototype_memory_pmci": 0.0,
+      "matryoshka_head": 0.4622,
+      "total_M": 26.5974,
+      "trainable_M": 26.597
+    },
+    "M2": {
+      "vit_base": 22.0558,
+      "vit_adapters": 2.2956,
+      "gated_drm_and_3d_head": 1.9383,
+      "gaussian_aggregator_3d_dgsa": 0.9957,
+      "prototype_memory_pmci": 0.0,
+      "matryoshka_head": 0.4622,
+      "total_M": 27.7477,
+      "trainable_M": 27.7473
+    },
+    "M3": {
+      "vit_base": 22.0558,
+      "vit_adapters": 2.2956,
+      "gated_drm_and_3d_head": 1.9383,
+      "gaussian_aggregator_3d_dgsa": 0.9957,
+      "prototype_memory_pmci": 3.222,
+      "matryoshka_head": 0.4622,
+      "total_M": 30.9697,
+      "trainable_M": 30.9693
+    },
+    "M5_full": {
+      "vit_base": 22.0558,
+      "vit_adapters": 2.2956,
+      "gated_drm_and_3d_head": 1.9383,
+      "gaussian_aggregator_3d_dgsa": 0.9957,
+      "prototype_memory_pmci": 3.222,
+      "matryoshka_head": 0.4622,
+      "total_M": 30.9697,
+      "trainable_M": 30.9693
+    }
+  },
+  "hardware_efficiency_rows": [
+    {
+      "model": "CricaVPR (Teacher)",
+      "net_params_M": 106.76,
+      "pca_params_M": 0.0,
+      "effective_total_params_M": 106.76,
+      "desc_dim": 10752,
+      "faiss_1M_RAM_GB": 40.05,
+      "bs1_latency_ms": 53.0,
+      "bs32_throughput_img_s": 44.0,
+      "bs1_peak_vram_MB": 488.4
+    },
+    {
+      "model": "D2VPR (Encoder, Raw)",
+      "net_params_M": 38.24,
+      "pca_params_M": 0.0,
+      "effective_total_params_M": 38.24,
+      "desc_dim": 10752,
+      "faiss_1M_RAM_GB": 40.05,
+      "bs1_latency_ms": 58.15,
+      "bs32_throughput_img_s": 101.3,
+      "bs1_peak_vram_MB": 212.4
+    },
+    {
+      "model": "D2VPR (Encoder + PCA4096)",
+      "net_params_M": 38.24,
+      "pca_params_M": 44.04,
+      "effective_total_params_M": 82.28,
+      "desc_dim": 4096,
+      "faiss_1M_RAM_GB": 15.26,
+      "bs1_latency_ms": 77.05,
+      "bs32_throughput_img_s": 100.8,
+      "bs1_peak_vram_MB": 212.4
+    },
+    {
+      "model": "D2VPR (No Encoder)",
+      "net_params_M": 27.21,
+      "pca_params_M": 0.0,
+      "effective_total_params_M": 27.21,
+      "desc_dim": 10752,
+      "faiss_1M_RAM_GB": 40.05,
+      "bs1_latency_ms": 61.58,
+      "bs32_throughput_img_s": 101.9,
+      "bs1_peak_vram_MB": 146.7
+    },
+    {
+      "model": "G3-VPR (Ours, 4096-D Max)",
+      "net_params_M": 30.97,
+      "pca_params_M": 0.0,
+      "effective_total_params_M": 30.97,
+      "desc_dim": 4096,
+      "faiss_1M_RAM_GB": 15.26,
+      "bs1_latency_ms": 57.62,
+      "bs32_throughput_img_s": 125.7,
+      "bs1_peak_vram_MB": 161.0
+    },
+    {
+      "model": "G3-VPR (Ours, 512-D Balanced)",
+      "net_params_M": 30.97,
+      "pca_params_M": 0.0,
+      "effective_total_params_M": 30.97,
+      "desc_dim": 512,
+      "faiss_1M_RAM_GB": 1.91,
+      "bs1_latency_ms": 57.62,
+      "bs32_throughput_img_s": 125.7,
+      "bs1_peak_vram_MB": 161.0
+    },
+    {
+      "model": "G3-VPR (Ours, 256-D Edge)",
+      "net_params_M": 30.97,
+      "pca_params_M": 0.0,
+      "effective_total_params_M": 30.97,
+      "desc_dim": 256,
+      "faiss_1M_RAM_GB": 0.95,
+      "bs1_latency_ms": 57.62,
+      "bs32_throughput_img_s": 125.7,
+      "bs1_peak_vram_MB": 161.0
+    },
+    {
+      "model": "G3-VPR (Ours, 128-D Ultra-Compact)",
+      "net_params_M": 30.97,
+      "pca_params_M": 0.0,
+      "effective_total_params_M": 30.97,
+      "desc_dim": 128,
+      "faiss_1M_RAM_GB": 0.48,
+      "bs1_latency_ms": 57.62,
+      "bs32_throughput_img_s": 125.7,
+      "bs1_peak_vram_MB": 161.0
+    }
+  ]
+}
