@@ -71,7 +71,7 @@ class PittsburghDataset(Dataset):
         img_path = self.image_paths[index]
         # img = Image.open(self.dataset_path / img_path)
         # img = torchvision.io.decode_image(self.dataset_path / img_path, mode="RGB")
-        img = torchvision.io.read_image(self.dataset_path / img_path, mode=torchvision.io.ImageReadMode.RGB)
+        img = Image.open(self.dataset_path / img_path).convert("RGB")
 
         if self.transform:
             img = self.transform(img)

@@ -32,15 +32,14 @@ import pandas as pd
 from pathlib import Path
 from PIL import Image
 import torch
-import torchvision
 from torch.utils.data import Dataset
-import torchvision.transforms.v2 as T
+import torchvision.transforms as T
 
 
-# Transforms are passed to the dataset, if not, we will use this standard transform
+# Pure PIL + standard torchvision transforms (avoids C++ torchvision.io extension version conflicts)
 default_transform = T.Compose([
     T.Resize((224, 224)),
-    T.ToDtype(torch.float32, scale=True),
+    T.ToTensor(),
     T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
@@ -88,9 +87,7 @@ class GSVCitiesDataset(Dataset):
         for _, row in place.iterrows():
             img_name = self._get_img_name(row)
             img_path = self.base_path / 'Images' / row['city_id'] / img_name
-            # img = Image.open(img_path).convert('RGB')
-            # img = torchvision.io.decode_image(img_path, mode="RGB")
-            img = torchvision.io.read_image(img_path, mode=torchvision.io.ImageReadMode.RGB)
+            img = Image.open(img_path).convert('RGB')
             
             if self.transform is not None:
                 img = self.transform(img)

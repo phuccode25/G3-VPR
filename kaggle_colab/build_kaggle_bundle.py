@@ -78,7 +78,8 @@ def main() -> None:
             "    for i in range(torch.cuda.device_count()):\n",
             '        print(f"  GPU {i}: {torch.cuda.get_device_name(i)} ({torch.cuda.get_device_properties(i).total_memory/1e9:.1f} GB)")\n',
             "\n",
-            "!pip install -q pytorch-metric-learning faiss-cpu transformers timm einops",
+            "!pip uninstall -y -q torchaudio\n",
+            "!pip install -q --no-deps pytorch-metric-learning && pip install -q faiss-cpu",
         ]
     )
 
@@ -161,7 +162,7 @@ def main() -> None:
                     '    f"{RESUME_ARG} "\n',
                     '    f"--teacher_2d megaloc "\n',
                     '    f"--teacher_3d depth_anything_v2 "\n',
-                    '    f"--bs 64 --epochs 10 --max_places 20000 --lr 2e-4 --devices 1 "\n',
+                    '    f"--bs 32 --grad_accum 2 --epochs 10 --max_places 20000 --lr 2e-4 --devices 1 "\n',
                     '    f"--save_dir \\"{SAVE_DIR}\\""\n',
                     ")\n",
                     'print("Running:", cmd)\n',
@@ -181,7 +182,7 @@ def main() -> None:
                     '    out_d = f"./checkpoints/ablation_{abl}"\n',
                     '    !yes | python -u train_g3vpr.py --ablation {abl} --gsv_path "{GSV_PATH}" --cities "{ABLATION_CITIES}" \\\n',
                     "        --dinov2_path ./dinov2_vits14_pretrain.pth --teacher_2d megaloc --teacher_3d depth_anything_v2 \\\n",
-                    '        --bs 64 --epochs 5 --max_places 6000 --devices 1 --save_dir "{out_d}"',
+                    '        --bs 32 --grad_accum 2 --epochs 5 --max_places 6000 --devices 1 --save_dir "{out_d}"',
                 ],
             },
             {
@@ -236,7 +237,47 @@ def main() -> None:
         r2 = subprocess.run([sys.executable, "eval_g3vpr_sota.py", "--help"], cwd=tmpd, capture_output=True, text=True)
         assert r1.returncode == 0, r1.stderr
         assert r2.returncode == 0, r2.stderr
-        print("Isolated fresh-directory extraction & CLI verification PASSED 100%!")
+
+        # Full 1-epoch mock-GSV-Cities end-to-end training + held-out validation + checkpoint save test!
+        import pandas as pd
+        from PIL import Image
+
+        mock_gsv = Path(tmpd) / "mock_gsv"
+        (mock_gsv / "Dataframes").mkdir(parents=True)
+        for city in ("London", "WashingtonDC"):
+            (mock_gsv / "Images" / city).mkdir(parents=True)
+            rows = []
+            for pid in range(1, 7):
+                for v in range(4):
+                    pano = f"pano{pid}_{v}"
+                    yr, mo, nd, lat, lon = 2022, 5, 90 * v, "51.5", "-0.1"
+                    pl_str = str(pid).zfill(7)
+                    fn = f"{city}_{pl_str}_{str(yr).zfill(4)}_{str(mo).zfill(2)}_{str(nd).zfill(3)}_{lat}_{lon}_{pano}.jpg"
+                    Image.new("RGB", (64, 64), (pid * 30, v * 50, 120)).save(mock_gsv / "Images" / city / fn)
+                    rows.append({"place_id": pid, "city_id": city, "panoid": pano, "year": yr, "month": mo, "northdeg": nd, "lat": lat, "lon": lon})
+            pd.DataFrame(rows).to_csv(mock_gsv / "Dataframes" / f"{city}.csv", index=False)
+
+        r3 = subprocess.run(
+            [
+                sys.executable,
+                "train_g3vpr.py",
+                "--ablation", "M5_full",
+                "--gsv_path", str(mock_gsv),
+                "--teacher_2d", "none",
+                "--teacher_3d", "none",
+                "--bs", "2",
+                "--grad_accum", "2",
+                "--epochs", "1",
+                "--num_workers", "0",
+                "--save_dir", str(Path(tmpd) / "ckpts"),
+            ],
+            cwd=tmpd,
+            capture_output=True,
+            text=True,
+        )
+        assert r3.returncode == 0, f"E2E train failed:\nSTDOUT:\n{r3.stdout}\nSTDERR:\n{r3.stderr}"
+        assert (Path(tmpd) / "ckpts" / "g3vpr_universal_best.pth").is_file(), "Checkpoint was not created!"
+        print("Isolated fresh-directory E2E Training + Validation + Checkpoint Verification PASSED 100%!")
 
 
 if __name__ == "__main__":

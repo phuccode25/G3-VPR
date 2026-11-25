@@ -183,7 +183,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--teacher_2d", type=str, default="megaloc", choices=["megaloc", "cricavpr", "none"])
     p.add_argument("--teacher_3d", type=str, default="depth_anything_v2", choices=["depth_anything_v2", "vggt", "none"])
     p.add_argument("--cricavpr_ckpt", type=str, default=None)
-    p.add_argument("--bs", type=int, default=64)
+    p.add_argument("--bs", type=int, default=32, help="Places per micro-batch (32x4=128 imgs fits comfortably in 16GB T4)")
+    p.add_argument("--grad_accum", type=int, default=2, help="Gradient accumulation steps (32x2 = effective 64 places = 256 imgs)")
     p.add_argument("--eval_bs", type=int, default=32)
     p.add_argument("--img_per_place", type=int, default=4)
     p.add_argument("--epochs", type=int, default=10)
@@ -304,7 +305,8 @@ def main() -> None:
         steps = 0
 
         pbar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{args.epochs}", ncols=105)
-        for images, labels in pbar:
+        optimizer.zero_grad(set_to_none=True)
+        for step_idx, (images, labels) in enumerate(pbar, start=1):
             images = images.flatten(0, 1).to(device, non_blocking=True)
             labels = labels.flatten().to(device, non_blocking=True)
 
@@ -317,16 +319,19 @@ def main() -> None:
                 if t_out["teacher_depth"] is not None:
                     t_3d = t_out["teacher_depth"].to(device, non_blocking=True)
 
-            optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type="cuda" if "cuda" in device else "cpu", dtype=torch.float16, enabled=("cuda" in device)):
                 out = model(images, return_aux=True)
                 loss_dict = criterion(out, labels=labels, teacher_2d_desc=t_2d, teacher_depth=t_3d)
+                scaled_loss = loss_dict["loss"] / max(args.grad_accum, 1)
 
-            scaler.scale(loss_dict["loss"]).backward()
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
-            scaler.step(optimizer)
-            scaler.update()
+            scaler.scale(scaled_loss).backward()
+
+            if step_idx % max(args.grad_accum, 1) == 0 or step_idx == len(train_loader):
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
 
             steps += 1
             running_loss += float(loss_dict["loss"].item())
