@@ -165,7 +165,7 @@ def main() -> None:
                     '    f"--save_dir \\"{SAVE_DIR}\\""\n',
                     ")\n",
                     'print("Running:", cmd)\n',
-                    "!{cmd}",
+                    "!yes | {cmd}",
                 ],
             },
             {
@@ -179,7 +179,7 @@ def main() -> None:
                     'ABLATION_CITIES = "London,Boston,Melbourne,Chicago,Toronto"\n',
                     'for abl in ["M1", "M2", "M3", "M4", "M5_full"]:\n',
                     '    out_d = f"./checkpoints/ablation_{abl}"\n',
-                    '    !python -u train_g3vpr.py --ablation {abl} --gsv_path "{GSV_PATH}" --cities "{ABLATION_CITIES}" \\\n',
+                    '    !yes | python -u train_g3vpr.py --ablation {abl} --gsv_path "{GSV_PATH}" --cities "{ABLATION_CITIES}" \\\n',
                     "        --dinov2_path ./dinov2_vits14_pretrain.pth --teacher_2d megaloc --teacher_3d depth_anything_v2 \\\n",
                     '        --bs 64 --epochs 5 --max_places 6000 --devices 1 --save_dir "{out_d}"',
                 ],

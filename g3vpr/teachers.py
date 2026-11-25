@@ -37,7 +37,16 @@ class DualTeacherEngine(nn.Module):
 
     def _load_2d_teacher(self, cricavpr_ckpt: Optional[str]) -> None:
         if self.teacher_2d_name == "megaloc":
-            model = torch.hub.load("gmberton/MegaLoc", "get_trained_model")
+            import os
+            hub_dir = torch.hub.get_dir()
+            os.makedirs(hub_dir, exist_ok=True)
+            trusted_file = os.path.join(hub_dir, "trusted_list")
+            existing = open(trusted_file, "r", encoding="utf-8").read() if os.path.isfile(trusted_file) else ""
+            with open(trusted_file, "a", encoding="utf-8") as f:
+                for repo_tag in ("gmberton_MegaLoc", "facebookresearch_dinov2"):
+                    if repo_tag not in existing:
+                        f.write(repo_tag + "\n")
+            model = torch.hub.load("gmberton/MegaLoc", "get_trained_model", trust_repo=True)
             self.model_2d = model.eval().to(self.device_str)
         elif self.teacher_2d_name == "cricavpr":
             import network
