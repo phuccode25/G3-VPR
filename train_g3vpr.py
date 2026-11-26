@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 import random
 import time
@@ -87,6 +88,21 @@ def auto_find_dataset_dir(default_path: Optional[str], target_folder_name: str) 
     return default_path
 
 
+def auto_detect_warmstart(explicit_ckpt: Optional[str], disable_warmstart: bool = False) -> Optional[str]:
+    if disable_warmstart:
+        return None
+    if explicit_ckpt and os.path.isfile(explicit_ckpt):
+        return explicit_ckpt
+    for cand in (
+        "./weights_init/vits_adapter_warmstart_fp16.pt",
+        "./weights/distillation.pth",
+        "./weights/finetune_no_encoder.pth",
+    ):
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
 @torch.no_grad()
 def eval_dataset_multi_dim(model, ds, num_db: int, positives, eval_bs: int, num_workers: int, device: str, dims=(256, 4096)):
     loader = DataLoader(ds, batch_size=eval_bs, shuffle=False, num_workers=num_workers)
@@ -108,99 +124,147 @@ def eval_dataset_multi_dim(model, ds, num_db: int, positives, eval_bs: int, num_
 @torch.no_grad()
 def run_universal_validation(model, args: argparse.Namespace, epoch: int, device: str) -> Dict[str, float]:
     epoch_metrics: Dict[str, float] = {"epoch": epoch}
-    r1_scores_4096: List[float] = []
+    r1_scores: List[float] = []
 
     if args.val_pitts30k and os.path.isdir(args.val_pitts30k):
         ds_pitts = PittsburghDataset(args.val_pitts30k, transform=default_transform)
         m = eval_dataset_multi_dim(model, ds_pitts, ds_pitts.num_references, ds_pitts.ground_truth, args.eval_bs, args.num_workers, device)
         epoch_metrics["pitts30k_val_R1_4096"] = round(m[4096][1], 2)
         epoch_metrics["pitts30k_val_R1_256"] = round(m[256][1], 2)
-        r1_scores_4096.append(m[4096][1])
+        r1_scores.extend([m[4096][1], m[256][1]])
 
     if args.val_msls and os.path.isdir(args.val_msls):
         ds_msls = MSLSDataset(args.val_msls, transform=default_transform)
         m = eval_dataset_multi_dim(model, ds_msls, ds_msls.num_references, ds_msls.ground_truth, args.eval_bs, args.num_workers, device)
         epoch_metrics["msls_val_R1_4096"] = round(m[4096][1], 2)
         epoch_metrics["msls_val_R1_256"] = round(m[256][1], 2)
-        r1_scores_4096.append(m[4096][1])
+        r1_scores.extend([m[4096][1], m[256][1]])
 
-    if args.eval_datasets_folder and os.path.isdir(args.eval_datasets_folder):
-        ws_args = SimpleNamespace(resize=[224, 224], test_method="hard_resize", val_positive_dist_threshold=25)
-        for ds_name in ("sped", "amstertime"):
-            if os.path.isdir(os.path.join(args.eval_datasets_folder, ds_name, "images", "test")):
-                ds_ws = datasets_ws.BaseDataset(ws_args, args.eval_datasets_folder, ds_name, "test")
-                m = eval_dataset_multi_dim(model, ds_ws, ds_ws.database_num, ds_ws.get_positives(), args.eval_bs, args.num_workers, device)
-                epoch_metrics[f"{ds_name}_R1_4096"] = round(m[4096][1], 2)
-                epoch_metrics[f"{ds_name}_R1_256"] = round(m[256][1], 2)
-                r1_scores_4096.append(m[4096][1])
+    ws_args = SimpleNamespace(resize=[224, 224], test_method="hard_resize", val_positive_dist_threshold=25)
+    for cross_name in ("sped", "amstertime"):
+        c_dir = os.path.join(args.eval_datasets_folder, cross_name, "images", "test")
+        if os.path.isdir(c_dir):
+            ds_c = datasets_ws.BaseDataset(ws_args, args.eval_datasets_folder, cross_name, "test")
+            m = eval_dataset_multi_dim(model, ds_c, ds_c.database_num, ds_c.get_positives(), args.eval_bs, args.num_workers, device)
+            epoch_metrics[f"{cross_name}_R1_4096"] = round(m[4096][1], 2)
+            epoch_metrics[f"{cross_name}_R1_256"] = round(m[256][1], 2)
+            r1_scores.extend([m[4096][1], m[256][1]])
 
-    # Fallback held-out city validation (WashingtonDC) when only GSV-Cities is mounted on Kaggle
-    if not r1_scores_4096 and getattr(args, "_gsv_dir", None):
-        w_csv = os.path.join(args._gsv_dir, "Dataframes", "WashingtonDC.csv")
-        if os.path.isfile(w_csv):
-            ds_holdout = GSVCitiesDataset(dataset_path=args._gsv_dir, cities=["WashingtonDC"], img_per_place=2)
-            n_pl = min(len(ds_holdout), 400)
+    # Held-out WashingtonDC validation fallback on Kaggle when external test sets are not mounted
+    if not r1_scores and getattr(args, "_gsv_dir", None):
+        wash_csv = os.path.join(args._gsv_dir, "Dataframes", "WashingtonDC.csv")
+        if os.path.isfile(wash_csv):
+            gsv_hold = GSVCitiesDataset(dataset_path=args._gsv_dir, cities=["WashingtonDC"], img_per_place=2)
+            n_places = min(len(gsv_hold), 500)
+            # Fix deterministic RNG seed for held-out validation so epoch-to-epoch comparison is exact!
+            rng_state = random.getstate()
+            np_state = np.random.get_state()
+            random.seed(12345)
+            np.random.seed(12345)
             db_imgs, q_imgs = [], []
-            for pi in range(n_pl):
-                pair_imgs, _ = ds_holdout[pi]
-                db_imgs.append(pair_imgs[0])
-                q_imgs.append(pair_imgs[1])
-            all_hold = torch.stack(db_imgs + q_imgs, dim=0)
-            model.eval()
-            feats = {256: np.empty((2 * n_pl, 256), np.float32), 4096: np.empty((2 * n_pl, 4096), np.float32)}
-            for st in range(0, 2 * n_pl, args.eval_bs):
-                en = min(st + args.eval_bs, 2 * n_pl)
-                with torch.autocast(device_type="cuda" if "cuda" in device else "cpu", dtype=torch.float16, enabled=("cuda" in device)):
-                    out = model(all_hold[st:en].to(device), return_aux=True)
-                feats[256][st:en] = out["nested_descriptors"][256].float().cpu().numpy()
-                feats[4096][st:en] = out["nested_descriptors"][4096].float().cpu().numpy()
-            pos_hold = [np.array([qi], dtype=np.int64) for qi in range(n_pl)]
-            m256 = compute_faiss_recalls(feats[256][:n_pl], feats[256][n_pl:], pos_hold)
-            m4096 = compute_faiss_recalls(feats[4096][:n_pl], feats[4096][n_pl:], pos_hold)
-            epoch_metrics["holdout_WashingtonDC_R1_4096"] = round(m4096[1], 2)
-            epoch_metrics["holdout_WashingtonDC_R1_256"] = round(m256[1], 2)
-            r1_scores_4096.append(m4096[1])
+            for pi in range(n_places):
+                pair, _ = gsv_hold[pi]
+                db_imgs.append(pair[0])
+                q_imgs.append(pair[1])
+            random.setstate(rng_state)
+            np.random.set_state(np_state)
 
-    if r1_scores_4096:
-        universal_hm = len(r1_scores_4096) / sum(1.0 / max(s, 1e-3) for s in r1_scores_4096)
+            all_t = torch.stack(db_imgs + q_imgs)
+            feats_hold = {256: [], 4096: []}
+            model.eval()
+            for st in range(0, len(all_t), args.eval_bs):
+                batch_x = all_t[st : st + args.eval_bs].to(device)
+                with torch.autocast(device_type="cuda" if "cuda" in device else "cpu", dtype=torch.float16, enabled=("cuda" in device)):
+                    out = model(batch_x, return_aux=True)
+                for d in (256, 4096):
+                    feats_hold[d].append(out["nested_descriptors"][d].float().cpu().numpy())
+            pos_hold = [np.array([qi], dtype=np.int64) for qi in range(n_places)]
+            for d in (256, 4096):
+                arr = np.concatenate(feats_hold[d], axis=0)
+                rec = compute_faiss_recalls(arr[:n_places], arr[n_places:], pos_hold)
+                epoch_metrics[f"holdout_WashingtonDC_R1_{d}"] = round(rec[1], 2)
+            # For M5_full track both 4096-D & 256-D; for non-Matryoshka ablations track 4096-D primarily
+            if args.ablation.upper() == "M5_FULL":
+                r1_scores.extend([epoch_metrics["holdout_WashingtonDC_R1_4096"], epoch_metrics["holdout_WashingtonDC_R1_256"]])
+            else:
+                r1_scores.append(epoch_metrics["holdout_WashingtonDC_R1_4096"])
+
+    if r1_scores:
+        inv_sum = sum(1.0 / max(s, 1e-3) for s in r1_scores)
+        epoch_metrics["universal_harmonic_R1"] = round(len(r1_scores) / inv_sum, 2)
     else:
-        universal_hm = 0.0
-    epoch_metrics["universal_harmonic_R1"] = round(universal_hm, 2)
+        epoch_metrics["universal_harmonic_R1"] = 0.0
+
     return epoch_metrics
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Train G3-VPR (Pure PyTorch AMP — Zero Lightning Dependency)")
+    p = argparse.ArgumentParser(description="Unified G3-VPR v2 Training & Ablation Runner")
     p.add_argument("--ablation", type=str, default="M5_full", choices=["M1", "M2", "M3", "M4", "M5_full"])
-    p.add_argument("--gsv_path", type=str, default=None)
-    p.add_argument("--cities", type=str, default="all", help="'all' or comma-separated city names")
-    p.add_argument("--val_pitts30k", type=str, default="./datasets/pitts30k-val")
-    p.add_argument("--val_msls", type=str, default="./datasets/msls-val")
-    p.add_argument("--eval_datasets_folder", type=str, default="./datasets")
+    p.add_argument("--gsv_path", type=str, default=None, help="Path to GSV-Cities root")
+    p.add_argument("--cities", type=str, default="all", help="Comma-separated cities or 'all'")
+    p.add_argument("--max_places", type=int, default=0, help="Optional cap on places per epoch (resampled each epoch!)")
+    p.add_argument("--img_per_place", type=int, default=4)
+    p.add_argument("--bs", type=int, default=32, help="Places per batch (total images = bs * img_per_place)")
+    p.add_argument("--grad_accum", type=int, default=2, help="Gradient accumulation steps")
+    p.add_argument("--eval_bs", type=int, default=64)
+    p.add_argument("--epochs", type=int, default=8)
+    p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--weight_decay", type=float, default=1e-4)
+    p.add_argument("--unfreeze_last_n", type=int, default=6)
+    p.add_argument("--num_workers", type=int, default=4)
+    p.add_argument("--devices", type=int, default=1)
+
     p.add_argument("--dinov2_path", type=str, default=None)
     p.add_argument("--warmstart_ckpt", type=str, default=None)
+    p.add_argument("--no_warmstart", action="store_true", help="Disable automatic VPR ViT-S warmstart")
     p.add_argument("--resume_ckpt", type=str, default=None)
+
     p.add_argument("--teacher_2d", type=str, default="megaloc", choices=["megaloc", "cricavpr", "none"])
     p.add_argument("--teacher_3d", type=str, default="depth_anything_v2", choices=["depth_anything_v2", "vggt", "none"])
     p.add_argument("--cricavpr_ckpt", type=str, default=None)
-    p.add_argument("--bs", type=int, default=32, help="Places per micro-batch (32x4=128 imgs fits comfortably in 16GB T4)")
-    p.add_argument("--grad_accum", type=int, default=2, help="Gradient accumulation steps (32x2 = effective 64 places = 256 imgs)")
-    p.add_argument("--eval_bs", type=int, default=32)
-    p.add_argument("--img_per_place", type=int, default=4)
-    p.add_argument("--epochs", type=int, default=10)
-    p.add_argument("--lr", type=float, default=2e-4)
-    p.add_argument("--weight_decay", type=float, default=1e-3)
-    p.add_argument("--unfreeze_last_n", type=int, default=4)
-    p.add_argument("--lambda_rel_2d", type=float, default=1.5)
+    p.add_argument("--lambda_rel_2d", type=float, default=2.0)
     p.add_argument("--lambda_3d", type=float, default=0.5)
     p.add_argument("--lambda_proto", type=float, default=0.05)
-    p.add_argument("--num_workers", type=int, default=2)
-    p.add_argument("--devices", type=int, default=1)
-    p.add_argument("--max_places", type=int, default=0, help="Cap places per epoch (0 = all)")
+
+    p.add_argument("--val_pitts30k", type=str, default="./datasets/pitts30k-val")
+    p.add_argument("--val_msls", type=str, default="./datasets/msls-val")
+    p.add_argument("--eval_datasets_folder", type=str, default="./datasets")
     p.add_argument("--save_dir", type=str, default="./checkpoints/g3vpr_M5_full")
     p.add_argument("--seed", type=int, default=3407)
     p.add_argument("--fast_dev_run", action="store_true")
     return p.parse_args()
+
+
+def build_epoch_loader(base_gsv_ds: GSVCitiesDataset, args: argparse.Namespace, epoch: int, device: str) -> DataLoader:
+    if args.max_places and args.max_places < len(base_gsv_ds):
+        rng = np.random.default_rng(args.seed + epoch * 997)
+        sel_idx = rng.choice(len(base_gsv_ds), size=args.max_places, replace=False).tolist()
+        train_ds = Subset(base_gsv_ds, sel_idx)
+    else:
+        train_ds = base_gsv_ds
+
+    return DataLoader(
+        train_ds,
+        batch_size=args.bs,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=("cuda" in device),
+        drop_last=True,
+    )
+
+
+def save_fp16_compact_checkpoint(payload: Dict[str, object], out_path: Path) -> None:
+    sd = payload["model_state_dict"]  # type: ignore
+    fp16_sd = {k: (v.half() if torch.is_tensor(v) and v.is_floating_point() else v) for k, v in sd.items()}
+    compact = {
+        "epoch": payload["epoch"],
+        "ablation": payload["ablation"],
+        "best_universal_score": payload["best_universal_score"],
+        "metrics": payload["metrics"],
+        "model_state_dict": fp16_sd,
+    }
+    torch.save(compact, out_path)
 
 
 def main() -> None:
@@ -216,37 +280,27 @@ def main() -> None:
     if sped_dir and os.path.isdir(sped_dir):
         args.eval_datasets_folder = str(Path(sped_dir).parent)
 
+    warmstart_path = auto_detect_warmstart(args.warmstart_ckpt, disable_warmstart=args.no_warmstart)
+    if warmstart_path:
+        print(f"[Warm-Start Enabled] Loading ViT-S + MulConvAdapter backbone from: {warmstart_path}")
+
     if args.cities == "all":
-        all_csvs = [Path(p).stem for p in Path(gsv_dir).glob("Dataframes/*.csv")]
+        all_csvs = sorted([Path(p).stem for p in Path(gsv_dir).glob("Dataframes/*.csv")])
         cities = [c for c in all_csvs if c != "WashingtonDC"] if len(all_csvs) > 1 else "all"
     else:
         cities = [c.strip() for c in args.cities.split(",") if c.strip()]
 
     base_gsv_ds = GSVCitiesDataset(dataset_path=gsv_dir, cities=cities, img_per_place=args.img_per_place)
-    if args.max_places and args.max_places < len(base_gsv_ds):
-        sel_idx = np.linspace(0, len(base_gsv_ds) - 1, args.max_places, dtype=int).tolist()
-        train_ds = Subset(base_gsv_ds, sel_idx)
-    else:
-        train_ds = base_gsv_ds
-
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=args.bs,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=("cuda" in device),
-        drop_last=True,
-    )
 
     cfg = G3VPRConfig.from_ablation(
         ablation=args.ablation,
         pretrained_dinov2_path=args.dinov2_path,
-        warmstart_d2vpr_ckpt=args.warmstart_ckpt,
+        warmstart_d2vpr_ckpt=warmstart_path,
     )
     model = build_g3vpr(
         ablation=args.ablation,
         pretrained_dinov2_path=args.dinov2_path,
-        warmstart_d2vpr_ckpt=args.warmstart_ckpt,
+        warmstart_d2vpr_ckpt=warmstart_path,
     ).to(device)
     model.freeze_early_vit_blocks(unfreeze_last_n=args.unfreeze_last_n)
 
@@ -265,16 +319,17 @@ def main() -> None:
 
     use_matryoshka = cfg.ablation.upper() == "M5_FULL"
     use_distill = cfg.ablation.upper() in ("M4", "M5_FULL")
+    teacher_dim = 10752 if args.teacher_2d.lower() == "cricavpr" else 8448
     criterion = UnifiedG3VPRLoss(
         use_matryoshka=use_matryoshka,
         lambda_rel_2d=args.lambda_rel_2d if use_distill else 0.0,
         lambda_3d=args.lambda_3d if use_distill else 0.0,
         lambda_proto=args.lambda_proto if cfg.use_pmci else 0.0,
+        teacher_2d_dim=teacher_dim,
     ).to(device)
 
     teacher_engine: Optional[DualTeacherEngine] = None
     if use_distill and (args.teacher_2d != "none" or args.teacher_3d != "none"):
-        # Put frozen teachers on cuda:1 if T4 x2 is enabled on Kaggle, freeing 100% of cuda:0 VRAM for Student!
         teacher_dev = "cuda:1" if (torch.cuda.is_available() and torch.cuda.device_count() > 1) else device
         print(f"[Loading Frozen Teachers ({args.teacher_2d}, {args.teacher_3d}) on {teacher_dev}]")
         teacher_engine = DualTeacherEngine(
@@ -285,21 +340,49 @@ def main() -> None:
             use_fp16=True,
         )
 
-    bb_params = [p for n, p in model.named_parameters() if p.requires_grad and n.startswith("backbone.vit.")]
-    head_params = [p for n, p in model.named_parameters() if p.requires_grad and not n.startswith("backbone.vit.")]
+    # Differential LR: gentle LR on pretrained ViT blocks, full LR on adapters, G3 heads & TeacherBridge!
+    vit_block_params = [
+        p for n, p in model.named_parameters()
+        if p.requires_grad and n.startswith("backbone.vit.") and "adapter" not in n
+    ]
+    adapter_and_head_params = [
+        p for n, p in model.named_parameters()
+        if p.requires_grad and (not n.startswith("backbone.vit.") or "adapter" in n)
+    ] + [p for p in criterion.parameters() if p.requires_grad]
+
     optimizer = torch.optim.AdamW(
-        [{"params": bb_params, "lr": args.lr * 0.25}, {"params": head_params, "lr": args.lr}],
+        [
+            {"params": vit_block_params, "lr": args.lr * 0.15},
+            {"params": adapter_and_head_params, "lr": args.lr},
+        ],
         weight_decay=args.weight_decay,
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max(args.epochs, 1), eta_min=args.lr * 0.02
-    )
-    scaler = torch.amp.GradScaler("cuda", enabled=("cuda" in device))
 
-    print(f"=== Training G3-VPR ({args.ablation}) | Places={len(train_ds)} | BS={args.bs}x{args.img_per_place} | Device={device} ===")
+    eff_places = min(args.max_places, len(base_gsv_ds)) if args.max_places else len(base_gsv_ds)
+    steps_per_epoch = max(eff_places // max(args.bs, 1), 1)
+    opt_steps_per_epoch = max(math.ceil(steps_per_epoch / max(args.grad_accum, 1)), 1)
+    total_opt_steps = max(opt_steps_per_epoch * max(args.epochs - start_epoch, 1), 1)
+    warmup_steps = max(int(0.06 * total_opt_steps), 1)
+
+    def lr_lambda(current_step: int) -> float:
+        if current_step < warmup_steps:
+            return float(current_step + 1) / float(warmup_steps)
+        progress = float(current_step - warmup_steps) / float(max(total_opt_steps - warmup_steps, 1))
+        progress = min(max(progress, 0.0), 1.0)
+        return 0.03 + 0.97 * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+    scaler = torch.amp.GradScaler("cuda", init_scale=4096.0, enabled=("cuda" in device))
+
+    print(
+        f"=== Training G3-VPR v2 ({args.ablation}) | Places/ep={eff_places} (Total pool={len(base_gsv_ds)}) "
+        f"| BS={args.bs}x{args.img_per_place} | Accum={args.grad_accum} | Device={device} ==="
+    )
 
     for epoch in range(start_epoch, args.epochs):
+        train_loader = build_epoch_loader(base_gsv_ds, args, epoch, device)
         model.train()
+        criterion.train()
         t_ep = time.perf_counter()
         running_loss = 0.0
         steps = 0
@@ -328,9 +411,12 @@ def main() -> None:
 
             if step_idx % max(args.grad_accum, 1) == 0 or step_idx == len(train_loader):
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+                torch.nn.utils.clip_grad_norm_(
+                    list(model.parameters()) + list(criterion.parameters()), max_norm=5.0
+                )
                 scaler.step(optimizer)
                 scaler.update()
+                scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
 
             steps += 1
@@ -344,7 +430,6 @@ def main() -> None:
             if args.fast_dev_run and steps >= 2:
                 break
 
-        scheduler.step()
         if hasattr(base_gsv_ds, "_refresh_dataframes") and not args.fast_dev_run:
             base_gsv_ds._refresh_dataframes()
 
@@ -372,6 +457,7 @@ def main() -> None:
         torch.save(ckpt_payload, save_dir / "g3vpr_last.pth")
         if is_best:
             torch.save(ckpt_payload, save_dir / "g3vpr_universal_best.pth")
+            save_fp16_compact_checkpoint(ckpt_payload, save_dir / "g3vpr_best_fp16.pth")
         with open(save_dir / "training_metrics.json", "w", encoding="utf-8") as f:
             json.dump(history, f, indent=2)
 

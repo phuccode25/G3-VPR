@@ -77,9 +77,12 @@ def verify_warmstart_and_amp_training_step(device: str) -> Dict[str, object]:
     g3.freeze_early_vit_blocks(unfreeze_last_n=4)
     g3.train()
 
-    criterion = UnifiedG3VPRLoss(use_matryoshka=True, lambda_rel_2d=1.5, lambda_3d=0.5, lambda_proto=0.05).to(device)
-    opt = torch.optim.AdamW([p for p in g3.parameters() if p.requires_grad], lr=2e-4)
-    scaler = torch.amp.GradScaler("cuda", enabled=("cuda" in device))
+    criterion = UnifiedG3VPRLoss(use_matryoshka=True, lambda_rel_2d=2.0, lambda_3d=0.5, lambda_proto=0.05).to(device)
+    opt = torch.optim.AdamW(
+        [p for p in g3.parameters() if p.requires_grad] + [p for p in criterion.parameters() if p.requires_grad],
+        lr=2e-4,
+    )
+    scaler = torch.amp.GradScaler("cuda", init_scale=4096.0, enabled=("cuda" in device))
 
     # Simulate 4 places x 4 views = 16 images on RTX 3050 (4GB VRAM!)
     if "cuda" in device:

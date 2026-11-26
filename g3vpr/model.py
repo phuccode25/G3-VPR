@@ -1,8 +1,7 @@
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Optional, Union
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from .backbones import GeoSemanticGatedBackbone
 from .gaussian_aggregator import Vectorized3DGaussianAggregator
@@ -17,7 +16,7 @@ class G3VPRConfig:
       - M1: Static DRM + Axis-Aligned Gaussian/Grid (no rotation) + No PMCI + Fixed 4096D
       - M2: + Rotated Anisotropic 2D Gaussian Splatting (3D-DGSA) + Gated-DRM
       - M3: + Prototype Memory Cross-Interaction (PMCI, solving BS=1)
-      - M4: + Dual-Foundation Relational + 3D Structural Distillation (handled in loss)
+      - M4: + Dual-Foundation Subspace & Geodesic Relational + 3D Structural Distillation (in loss)
       - M5_full: Full G3-VPR with Matryoshka Elastic Nested Descriptors (128D..4096D)
     """
     ablation: str = "M5_full"
@@ -82,7 +81,7 @@ class G3VPRConfig:
 
 class G3VPR(nn.Module):
     """
-    G3-VPR: Geometry-Grounded Gaussian Aggregation and Matryoshka Relational Distillation
+    G3-VPR v2: Geometry-Grounded Gaussian Aggregation and Matryoshka Relational Distillation
     for Universal Single-Query Visual Place Recognition.
     """
 
@@ -118,16 +117,21 @@ class G3VPR(nn.Module):
             nested_dims=MATRYOSHKA_DIMS,
         )
 
-    def freeze_early_vit_blocks(self, unfreeze_last_n: int = 4) -> None:
-        """Freeze early ViT blocks while keeping MulConvAdapters, last N blocks, and G3 heads trainable."""
+    def freeze_early_vit_blocks(self, unfreeze_last_n: int = 6) -> None:
+        """
+        Keep MulConvAdapters, shallow structural tap blocks [2, 4] (0-indexed: 1, 3),
+        and the top `unfreeze_last_n` deep semantic blocks trainable!
+        """
         total_blocks = len(self.backbone.vit.blocks)
         trainable_start = max(0, total_blocks - unfreeze_last_n)
+        shallow_zero_idx = {idx - 1 for idx in self.backbone.shallow_layers}
+
         for name, param in self.backbone.vit.named_parameters():
-            if "adapter" in name:
+            if "adapter" in name or name.startswith("norm."):
                 param.requires_grad = True
             elif name.startswith("blocks."):
                 blk_idx = int(name.split(".")[1])
-                param.requires_grad = blk_idx >= trainable_start
+                param.requires_grad = (blk_idx >= trainable_start) or (blk_idx in shallow_zero_idx)
             else:
                 param.requires_grad = False
 

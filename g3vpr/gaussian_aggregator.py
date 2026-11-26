@@ -9,9 +9,9 @@ def _build_default_anchors(num_splats: int = 16) -> torch.Tensor:
     """
     Returns [K, 4] anchor priors (cx, cy, sx, sy) in normalized [0, 1] image coordinates.
     Default K=16:
-      - 4 medium quadrants (2x2)
-      - 9 fine regions (3x3)
-      - 3 perspective horizon/facade structural bands (left-mid-right street-canyon prior)
+      - Indices 0..3:  4 medium quadrants (2x2)
+      - Indices 4..12: 9 fine regions (3x3)
+      - Indices 13..15: 3 perspective horizon/facade structural bands (left-mid-right street-canyon prior)
     """
     anchors: List[Tuple[float, float, float, float]] = []
     # 4 medium 2x2 quadrants
@@ -30,7 +30,6 @@ def _build_default_anchors(num_splats: int = 16) -> torch.Tensor:
     if num_splats <= len(anchors):
         return torch.tensor(anchors[:num_splats], dtype=torch.float32)
 
-    # If K > 16, tile evenly on grid
     g = int(math.ceil(math.sqrt(num_splats)))
     extra = []
     for i in range(num_splats):
@@ -50,6 +49,7 @@ class GaussianPoseEncoder(nn.Module):
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, feat_dim),
+            nn.LayerNorm(feat_dim),
         )
 
     def forward(self, geom_vec: torch.Tensor) -> torch.Tensor:
@@ -58,13 +58,13 @@ class GaussianPoseEncoder(nn.Module):
 
 class Vectorized3DGaussianAggregator(nn.Module):
     """
-    3D-Guided Deformable Anisotropic Gaussian Splatting Aggregator (3D-DGSA).
+    3D-Guided Deformable Anisotropic Gaussian Splatting Aggregator (3D-DGSA v2).
 
-    Fixes three core flaws of D2VPR's TDDA:
-      1. Eliminates the 13-loop redundant offset_generator execution via single-pass vectorization.
-      2. Fixes the unnormalized [0, 1] vs [-1, 1] coordinate sampling bug via exact normalized [-1, 1] sampling.
-      3. Generalizes axis-aligned 2D boxes to rotated anisotropic 2D Gaussians (mu, sx, sy, theta)
-         weighted by 3D static salience S_geo to follow skewed 3D facades and suppress dynamic occluders.
+    Improvements in v2:
+      1. Symmetric Signed GeM Pooling (pos_gem - neg_gem) eliminating positive DC bias on LayerNorm features.
+      2. Learnable gated pose injection (pose_scale initialized small) preventing static anchor coordinates
+         from overwhelming L2-normalized visual appearance features.
+      3. Unit-norm regional token preservation across all (K + 1) splat tokens.
     """
 
     def __init__(
@@ -98,6 +98,8 @@ class Vectorized3DGaussianAggregator(nn.Module):
 
         self.gem_p = nn.Parameter(torch.tensor(float(gem_p)))
         self.pose_encoder = GaussianPoseEncoder(feat_dim=feat_dim, hidden_dim=128)
+        self.pose_scale = nn.Parameter(torch.tensor(0.05))
+        self.global_gate = nn.Parameter(torch.tensor(0.10))
 
         # Hierarchical splat-to-global refinement
         self.global_refine = nn.Sequential(
@@ -106,7 +108,6 @@ class Vectorized3DGaussianAggregator(nn.Module):
             nn.GELU(),
             nn.Linear(feat_dim, feat_dim),
         )
-        self.out_norm = nn.LayerNorm(feat_dim)
 
     def forward(
         self,
@@ -139,9 +140,8 @@ class Vectorized3DGaussianAggregator(nn.Module):
             align_corners=True,
         ).squeeze(-1).permute(0, 2, 1)  # [B, K, 5]
 
-        # Bounded, smooth parameter decoding
-        dx_dy = 0.22 * torch.tanh(sampled[..., 0:2])                                # [-0.22, +0.22]
-        scale_mul = 0.5 + 1.5 * torch.sigmoid(sampled[..., 2:4])                    # [0.5, 2.0]
+        dx_dy = 0.22 * torch.tanh(sampled[..., 0:2])
+        scale_mul = 0.5 + 1.5 * torch.sigmoid(sampled[..., 2:4])
         theta = (math.pi / 3.0) * torch.tanh(sampled[..., 4]) if self.allow_rotation else torch.zeros_like(sampled[..., 4])
 
         mu = (anchor_centers.unsqueeze(0) + dx_dy).clamp(0.05, 0.95)                # [B, K, 2]
@@ -157,12 +157,11 @@ class Vectorized3DGaussianAggregator(nn.Module):
         cos_t = torch.cos(theta).unsqueeze(-1)                                       # [B, K, 1]
         sin_t = torch.sin(theta).unsqueeze(-1)                                       # [B, K, 1]
 
-        # Rotate into principal axes of each 2D Gaussian splat
         dx_rot = cos_t * diff[..., 0] + sin_t * diff[..., 1]
         dy_rot = -sin_t * diff[..., 0] + cos_t * diff[..., 1]
 
-        sx = sigma[..., 0].unsqueeze(-1)                                             # [B, K, 1]
-        sy = sigma[..., 1].unsqueeze(-1)                                             # [B, K, 1]
+        sx = sigma[..., 0].unsqueeze(-1)
+        sy = sigma[..., 1].unsqueeze(-1)
         mahal_sq = (dx_rot / sx).square() + (dy_rot / sy).square()                   # [B, K, N_p]
 
         gauss_weights = torch.exp(-0.5 * mahal_sq)                                   # [B, K, N_p]
@@ -170,19 +169,25 @@ class Vectorized3DGaussianAggregator(nn.Module):
         combined_weights = gauss_weights * (0.15 + 0.85 * salience_flat)
         norm_weights = combined_weights / combined_weights.sum(dim=-1, keepdim=True).clamp(min=1e-6)  # [B, K, N_p]
 
-        # 4. Geometry-Weighted Generalized Mean (GeM) Pooling across all K splats in 1 tensor op
-        patch_normed = F.normalize(patch_map.flatten(2), p=2, dim=1)                 # [B, D, N_p]
-        p_exp = self.gem_p.clamp(min=1.0, max=6.0)
-        # Positive shift-rectified GeM in feature space (preserving sign via signed power or ReLU+residual)
-        pos_part = patch_normed.clamp(min=1e-6).pow(p_exp)                           # [B, D, N_p]
-        gem_pos = torch.einsum("bkn,bdn->bkd", norm_weights, pos_part).clamp(min=1e-6).pow(1.0 / p_exp)
-        linear_part = torch.einsum("bkn,bdn->bkd", norm_weights, patch_normed)
-        splat_feats = 0.5 * (gem_pos + linear_part)                                  # [B, K, D]
+        # 4. Zero-DC Symmetric Signed Generalized Mean (GeM) Pooling across all K splats in fp32
+        # Add eps BEFORE .pow(p_exp) so d/d(gem_p)[base^p = base^p * log(base)] never sees base=0 -> NaN!
+        with torch.amp.autocast(device_type="cuda" if patch_map.is_cuda else "cpu", enabled=False):
+            patch_f32 = F.normalize(patch_map.float().flatten(2), p=2, dim=1)        # [B, D, N_p]
+            nw_f32 = norm_weights.float()
+            p_exp = self.gem_p.float().clamp(min=1.0, max=5.0)
+            eps = 1e-5
 
-        # 5. Encode 2D Gaussian pose + 3D depth/salience statistics
-        depth_flat = depth_norm.flatten(2)                                           # [B, 1, N_p]
-        mean_depth = (norm_weights * depth_flat).sum(dim=-1, keepdim=True)           # [B, K, 1]
-        mean_sal = (norm_weights * salience_flat).sum(dim=-1, keepdim=True)          # [B, K, 1]
+            pos_pow = (F.relu(patch_f32) + eps).pow(p_exp)
+            neg_pow = (F.relu(-patch_f32) + eps).pow(p_exp)
+            gem_pos = torch.einsum("bkn,bdn->bkd", nw_f32, pos_pow).clamp(min=eps ** 5).pow(1.0 / p_exp) - eps
+            gem_neg = torch.einsum("bkn,bdn->bkd", nw_f32, neg_pow).clamp(min=eps ** 5).pow(1.0 / p_exp) - eps
+            splat_feats_f32 = F.normalize(gem_pos - gem_neg, p=2, dim=-1)
+        splat_feats = splat_feats_f32.to(dtype)                                      # [B, K, D]
+
+        # 5. Gated Geometric Pose Injection (preserves 100% visual discriminability at init)
+        depth_flat = depth_norm.flatten(2)
+        mean_depth = (norm_weights * depth_flat).sum(dim=-1, keepdim=True)
+        mean_sal = (norm_weights * salience_flat).sum(dim=-1, keepdim=True)
 
         geom_vec = torch.cat(
             [
@@ -195,19 +200,24 @@ class Vectorized3DGaussianAggregator(nn.Module):
             ],
             dim=-1,
         )  # [B, K, 8]
-        splat_feats = splat_feats + self.pose_encoder(geom_vec)
+        pose_emb = F.normalize(self.pose_encoder(geom_vec).float(), p=2, dim=-1)
+        p_scale = torch.tanh(self.pose_scale.float())
+        splat_feats_f32 = F.normalize(splat_feats_f32 + p_scale * pose_emb, p=2, dim=-1)
 
-        # 6. Global token refinement from salience-weighted splats
-        splat_summary = (splat_feats * mean_sal).sum(dim=1) / mean_sal.sum(dim=1).clamp(min=1e-6)
-        global_enhanced = cls_token + self.global_refine(torch.cat([cls_token, splat_summary], dim=-1))
+        # 6. Global token refinement from salience-weighted splats (fp32 unit-norm safe)
+        ms_f32 = mean_sal.float()
+        splat_summary = F.normalize(
+            (splat_feats_f32 * ms_f32).sum(dim=1) / ms_f32.sum(dim=1).clamp(min=1e-6), p=2, dim=-1
+        )
+        cls_norm = F.normalize(cls_token.float(), p=2, dim=-1)
+        refined_delta = F.normalize(
+            self.global_refine(torch.cat([cls_norm, splat_summary], dim=-1).to(dtype)).float(), p=2, dim=-1
+        )
+        global_token_f32 = F.normalize(
+            cls_norm + torch.tanh(self.global_gate.float()) * refined_delta, p=2, dim=-1
+        ).unsqueeze(1)
 
-        global_geom = torch.tensor([0.5, 0.5, 0.5, 0.5, 1.0, 0.0], device=device, dtype=dtype).view(1, 1, 6).expand(B, 1, 6)
-        global_depth_sal = torch.cat(
-            [depth_flat.mean(dim=-1, keepdim=True), salience_flat.mean(dim=-1, keepdim=True)], dim=-1
-        )  # [B, 1, 2]
-        global_token = global_enhanced.unsqueeze(1) + self.pose_encoder(torch.cat([global_geom, global_depth_sal], dim=-1))
-
-        tokens = self.out_norm(torch.cat([global_token, splat_feats], dim=1))        # [B, K + 1, D]
+        tokens = torch.cat([global_token_f32, splat_feats_f32], dim=1).to(dtype)     # [B, K + 1, D]
 
         return {
             "tokens": tokens,                    # [B, K + 1, D]

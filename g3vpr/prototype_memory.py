@@ -6,10 +6,10 @@ import torch.nn.functional as F
 
 class PrototypeInteractionLayer(nn.Module):
     """
-    Single per-image calibration block:
+    Single per-image calibration block with DINOv2-style LayerScale gates:
       1) Intra-image Self-Attention across the (K + 1) Gaussian splat tokens (strictly within each image!).
       2) Cross-Attention from image splat tokens (Queries) to M Learnable Geo-Context Prototypes (Keys/Values).
-      3) Lightweight SwiGLU/GELU FFN.
+      3) Lightweight GELU FFN with gated residual preservation.
     """
 
     def __init__(self, dim: int = 512, num_heads: int = 8, mlp_ratio: float = 2.0, dropout: float = 0.05):
@@ -18,13 +18,14 @@ class PrototypeInteractionLayer(nn.Module):
         self.self_attn = nn.MultiheadAttention(
             embed_dim=dim, num_heads=num_heads, dropout=dropout, batch_first=True
         )
+        self.sa_gamma = nn.Parameter(torch.full((dim,), 0.05))
 
         self.norm_ca_q = nn.LayerNorm(dim)
         self.norm_ca_kv = nn.LayerNorm(dim)
         self.cross_attn = nn.MultiheadAttention(
             embed_dim=dim, num_heads=num_heads, dropout=dropout, batch_first=True
         )
-        self.ca_gate = nn.Parameter(torch.tensor(0.25))
+        self.ca_gamma = nn.Parameter(torch.full((dim,), 0.05))
 
         hidden = int(dim * mlp_ratio)
         self.norm_ffn = nn.LayerNorm(dim)
@@ -34,27 +35,29 @@ class PrototypeInteractionLayer(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden, dim),
         )
+        self.ffn_gamma = nn.Parameter(torch.full((dim,), 0.05))
 
     def forward(self, tokens: torch.Tensor, prototypes: torch.Tensor) -> torch.Tensor:
         # tokens: [B, T, D], prototypes: [B, M, D] — strictly batch_first=True (zero cross-batch leakage!)
         q_sa = self.norm_sa(tokens)
         sa_out, _ = self.self_attn(q_sa, q_sa, q_sa, need_weights=False)
-        tokens = tokens + sa_out
+        tokens = tokens + self.sa_gamma * sa_out
 
         q_ca = self.norm_ca_q(tokens)
         kv_ca = self.norm_ca_kv(prototypes)
         ca_out, _ = self.cross_attn(q_ca, kv_ca, kv_ca, need_weights=False)
-        tokens = tokens + torch.tanh(self.ca_gate) * ca_out
+        tokens = tokens + self.ca_gamma * ca_out
 
-        tokens = tokens + self.ffn(self.norm_ffn(tokens))
+        tokens = tokens + self.ffn_gamma * self.ffn(self.norm_ffn(tokens))
         return tokens
 
 
 class PrototypeMemoryCrossInteraction(nn.Module):
     """
-    Prototype Memory Cross-Interaction (PMCI).
-    Replaces D2VPR's 11.03M-parameter batch-dependent cross_image_encoder with a compact (~1.35M param)
-    Learnable Geo-Prototype Memory Bank that operates identically at batch_size = 1, 8, or 128.
+    Prototype Memory Cross-Interaction (PMCI v2).
+    Replaces D2VPR's 11.03M-parameter batch-dependent cross_image_encoder with a compact
+    Learnable Geo-Prototype Memory Bank that operates identically at batch_size = 1, 8, or 128,
+    while preserving unit-sphere regional discriminability from Step 0.
     """
 
     def __init__(
@@ -70,7 +73,6 @@ class PrototypeMemoryCrossInteraction(nn.Module):
         self.dim = dim
         self.num_prototypes = num_prototypes
 
-        # Orthogonal initialization encourages diverse scene/domain prototypes from step 0
         proto = torch.empty(num_prototypes, dim)
         nn.init.orthogonal_(proto)
         self.prototypes = nn.Parameter(proto)
@@ -83,7 +85,6 @@ class PrototypeMemoryCrossInteraction(nn.Module):
                 for _ in range(num_layers)
             ]
         )
-        self.final_norm = nn.LayerNorm(dim)
 
     def get_normalized_prototypes(self) -> torch.Tensor:
         return F.normalize(self.prototypes, p=2, dim=-1)
@@ -94,7 +95,7 @@ class PrototypeMemoryCrossInteraction(nn.Module):
         out = tokens
         for layer in self.layers:
             out = layer(out, proto_expanded)
-        out = self.final_norm(out)
+        out = F.normalize(out.float(), p=2, dim=-1).to(tokens.dtype)
         return {
             "tokens": out,
             "prototypes_norm": self.get_normalized_prototypes(),

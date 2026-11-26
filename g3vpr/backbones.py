@@ -26,7 +26,7 @@ def _patch_adapter_dynamic_hw(adapter: nn.Module) -> None:
         outputs = torch.cat([b1, b2, b3], dim=1)
         outputs = outputs.reshape(B, D, H_p * W_p).permute(0, 2, 1).contiguous()
         clstoken = x0[:, 0:1, :]
-        outputs = torch.cat([clstoken, outputs], dim=1) + x0
+        outputs = (torch.cat([clstoken, outputs], dim=1) + x0).contiguous()
         outputs = adapter.D_fc2(outputs)
         if adapter.skip_connect:
             outputs = outputs + x
@@ -63,9 +63,10 @@ class DepthwiseSeparableHead(nn.Module):
 
 class GeoSemanticGatedBackbone(nn.Module):
     """
-    ViT-S/14 + MulConvAdapter with Geometry-Semantic Gated Distillation Recovery Module (Gated-DRM).
+    ViT-S/14 + MulConvAdapter with Isometric Geometry-Semantic Gated DRM (Gated-DRM v2).
     Separates shallow structural layers [2, 4] (3D geometry & static salience) from deep semantic
-    layers [8, 12] (illumination/season-invariant place semantics).
+    layers [8, 12] (illumination/era-invariant place semantics) using semi-orthogonal projections
+    that preserve pretrained cosine geometry from Step 0.
     """
 
     def __init__(
@@ -79,7 +80,6 @@ class GeoSemanticGatedBackbone(nn.Module):
     ):
         super().__init__()
         self.vit = vit_small(patch_size=14, img_size=518, init_values=1, block_chunks=0)
-        # Remove unused static linear projection from original D2VPR vision_transformer_small
         if hasattr(self.vit, "lin"):
             del self.vit.lin
         if hasattr(self.vit, "up_norm"):
@@ -101,8 +101,17 @@ class GeoSemanticGatedBackbone(nn.Module):
         deep_in = len(self.deep_layers) * self.embed_dim        # 768
 
         if use_gated_drm:
+            self.norm_struct = nn.LayerNorm(shallow_in)
+            self.norm_sem = nn.LayerNorm(deep_in)
             self.proj_struct = nn.Linear(shallow_in, out_dim)
             self.proj_sem = nn.Linear(deep_in, out_dim)
+            nn.init.orthogonal_(self.proj_struct.weight)
+            nn.init.zeros_(self.proj_struct.bias)
+            nn.init.orthogonal_(self.proj_sem.weight)
+            nn.init.zeros_(self.proj_sem.bias)
+
+            # Controlled structural modulation scale so deep semantic invariance leads at Step 0
+            self.struct_scale = nn.Parameter(torch.tensor(0.25))
             self.geo_head = DepthwiseSeparableHead(in_dim=shallow_in, hidden_dim=128)
             self.cls_gate = nn.Sequential(
                 nn.Linear(shallow_in + deep_in, out_dim),
@@ -110,10 +119,15 @@ class GeoSemanticGatedBackbone(nn.Module):
                 nn.Linear(out_dim, out_dim),
                 nn.Sigmoid(),
             )
+            nn.init.zeros_(self.cls_gate[-2].weight)
+            nn.init.zeros_(self.cls_gate[-2].bias)
             self.fusion_norm = nn.LayerNorm(out_dim)
         else:
             # M1 fallback: static concatenation projection without 3D salience gating
+            self.static_norm = nn.LayerNorm(shallow_in + deep_in)
             self.static_proj = nn.Linear(shallow_in + deep_in, out_dim)
+            nn.init.orthogonal_(self.static_proj.weight)
+            nn.init.zeros_(self.static_proj.bias)
             self.fusion_norm = nn.LayerNorm(out_dim)
 
         self._init_adapters()
@@ -138,20 +152,32 @@ class GeoSemanticGatedBackbone(nn.Module):
         sd = torch.load(path, map_location="cpu", weights_only=False)
         if isinstance(sd, dict) and "model_state_dict" in sd:
             sd = sd["model_state_dict"]
-        missing, unexpected = self.vit.load_state_dict(sd, strict=False)
+        cleaned = {k: v.float() for k, v in sd.items() if torch.is_tensor(v)}
+        missing, unexpected = self.vit.load_state_dict(cleaned, strict=False)
         return len(missing), len(unexpected)
 
     def load_d2vpr_warmstart(self, ckpt_path: str) -> int:
-        """Transfers ViT-S + MulConvAdapter weights from a D2VPR checkpoint."""
+        """Transfers ViT-S + MulConvAdapter weights from a VPR-adapted backbone or D2VPR checkpoint."""
         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-        sd = ckpt["model_state_dict"] if isinstance(ckpt, dict) and "model_state_dict" in ckpt else ckpt
+        if isinstance(ckpt, dict):
+            sd = ckpt.get("vit_state_dict", ckpt.get("model_state_dict", ckpt))
+        else:
+            sd = ckpt
+
         cleaned = {}
         for k, v in sd.items():
+            if not torch.is_tensor(v):
+                continue
             k_clean = k.replace("module.", "", 1)
-            if k_clean.startswith("backbone."):
+            if k_clean.startswith("backbone.vit."):
+                sub_k = k_clean[len("backbone.vit."):]
+            elif k_clean.startswith("backbone."):
                 sub_k = k_clean[len("backbone."):]
-                if not sub_k.startswith("lin.") and not sub_k.startswith("up_norm."):
-                    cleaned[sub_k] = v
+            else:
+                sub_k = k_clean
+            if not sub_k.startswith("lin.") and not sub_k.startswith("up_norm."):
+                cleaned[sub_k] = v.float()
+
         vit_sd = self.vit.state_dict()
         matched = {k: v for k, v in cleaned.items() if k in vit_sd and vit_sd[k].shape == v.shape}
         vit_sd.update(matched)
@@ -180,24 +206,28 @@ class GeoSemanticGatedBackbone(nn.Module):
         f_sem = torch.cat(deep_feats, dim=-1)        # [B, 1 + N_p, 768]
 
         if self.use_gated_drm:
+            f_struct_norm = self.norm_struct(f_struct)
+            f_sem_norm = self.norm_sem(f_sem)
+
             f_struct_patches_2d = (
-                f_struct[:, 1:, :].reshape(B, H_p, W_p, -1).permute(0, 3, 1, 2).contiguous()
+                f_struct_norm[:, 1:, :].reshape(B, H_p, W_p, -1).permute(0, 3, 1, 2).contiguous()
             )
             salience_gate, pseudo_depth = self.geo_head(f_struct_patches_2d)  # [B, 1, H_p, W_p]
 
-            sem_proj = self.proj_sem(f_sem)
-            struct_proj = self.proj_struct(f_struct)
+            sem_proj = self.proj_sem(f_sem_norm)
+            struct_proj = self.proj_struct(f_struct_norm)
+            s_weight = torch.tanh(self.struct_scale)
 
-            cls_gate = self.cls_gate(torch.cat([f_struct[:, 0], f_sem[:, 0]], dim=-1))  # [B, D]
-            cls_fused = sem_proj[:, 0] + cls_gate * struct_proj[:, 0]
+            cls_gate = self.cls_gate(torch.cat([f_struct_norm[:, 0], f_sem_norm[:, 0]], dim=-1))
+            cls_fused = sem_proj[:, 0] + s_weight * cls_gate * struct_proj[:, 0]
 
             gate_flat = salience_gate.flatten(2).transpose(1, 2)  # [B, N_p, 1]
-            patches_fused = sem_proj[:, 1:] + gate_flat * struct_proj[:, 1:]
+            patches_fused = sem_proj[:, 1:] + s_weight * gate_flat * struct_proj[:, 1:]
 
             all_fused = self.fusion_norm(torch.cat([cls_fused.unsqueeze(1), patches_fused], dim=1))
             f_struct_patches = struct_proj[:, 1:].reshape(B, H_p, W_p, self.out_dim).permute(0, 3, 1, 2).contiguous()
         else:
-            concat_all = torch.cat([f_struct, f_sem], dim=-1)
+            concat_all = self.static_norm(torch.cat([f_struct, f_sem], dim=-1))
             all_fused = self.fusion_norm(self.static_proj(concat_all))
             salience_gate = torch.ones((B, 1, H_p, W_p), device=x.device, dtype=x.dtype)
             pseudo_depth = torch.ones((B, 1, H_p, W_p), device=x.device, dtype=x.dtype)
