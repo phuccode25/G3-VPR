@@ -284,11 +284,16 @@ def main() -> None:
     if warmstart_path:
         print(f"[Warm-Start Enabled] Loading ViT-S + MulConvAdapter backbone from: {warmstart_path}")
 
+    all_csvs = sorted([Path(p).stem for p in Path(gsv_dir).glob("Dataframes/*.csv")])
     if args.cities == "all":
-        all_csvs = sorted([Path(p).stem for p in Path(gsv_dir).glob("Dataframes/*.csv")])
         cities = [c for c in all_csvs if c != "WashingtonDC"] if len(all_csvs) > 1 else "all"
     else:
-        cities = [c.strip() for c in args.cities.split(",") if c.strip()]
+        alias_map = {"Toronto": "TRT", "Oslo": "OSL", "Prague": "PRG", "Paris": "PRS"}
+        req = [alias_map.get(c.strip(), c.strip()) for c in args.cities.split(",") if c.strip()]
+        valid_set = set(all_csvs)
+        cities = [c for c in req if c in valid_set]
+        if not cities:
+            cities = [c for c in all_csvs if c != "WashingtonDC"] if len(all_csvs) > 1 else "all"
 
     base_gsv_ds = GSVCitiesDataset(dataset_path=gsv_dir, cities=cities, img_per_place=args.img_per_place)
 
