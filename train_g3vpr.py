@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 import datasets_ws
 from g3vpr import DualTeacherEngine, G3VPRConfig, UnifiedG3VPRLoss, build_g3vpr
-from src.dataloaders.gsv_cities import GSVCitiesDataset, default_transform
+from src.dataloaders.gsv_cities import GSVCitiesDataset, build_eval_transform, build_train_transform, default_transform
 from src.dataloaders.mapillary_sls import MapillarySLSDataset as MSLSDataset
 from src.dataloaders.pittsburgh import PittsburghDataset
 
@@ -126,35 +126,27 @@ def run_universal_validation(model, args: argparse.Namespace, epoch: int, device
     epoch_metrics: Dict[str, float] = {"epoch": epoch}
     r1_scores: List[float] = []
 
+    eval_tf = build_eval_transform(getattr(args, "img_size", 224))
     if args.val_pitts30k and os.path.isdir(args.val_pitts30k):
-        ds_pitts = PittsburghDataset(args.val_pitts30k, transform=default_transform)
+        ds_pitts = PittsburghDataset(args.val_pitts30k, transform=eval_tf)
         m = eval_dataset_multi_dim(model, ds_pitts, ds_pitts.num_references, ds_pitts.ground_truth, args.eval_bs, args.num_workers, device)
         epoch_metrics["pitts30k_val_R1_4096"] = round(m[4096][1], 2)
         epoch_metrics["pitts30k_val_R1_256"] = round(m[256][1], 2)
         r1_scores.extend([m[4096][1], m[256][1]])
 
     if args.val_msls and os.path.isdir(args.val_msls):
-        ds_msls = MSLSDataset(args.val_msls, transform=default_transform)
+        ds_msls = MSLSDataset(args.val_msls, transform=eval_tf)
         m = eval_dataset_multi_dim(model, ds_msls, ds_msls.num_references, ds_msls.ground_truth, args.eval_bs, args.num_workers, device)
         epoch_metrics["msls_val_R1_4096"] = round(m[4096][1], 2)
         epoch_metrics["msls_val_R1_256"] = round(m[256][1], 2)
         r1_scores.extend([m[4096][1], m[256][1]])
 
-    ws_args = SimpleNamespace(resize=[224, 224], test_method="hard_resize", val_positive_dist_threshold=25)
-    for cross_name in ("sped", "amstertime"):
-        c_dir = os.path.join(args.eval_datasets_folder, cross_name, "images", "test")
-        if os.path.isdir(c_dir):
-            ds_c = datasets_ws.BaseDataset(ws_args, args.eval_datasets_folder, cross_name, "test")
-            m = eval_dataset_multi_dim(model, ds_c, ds_c.database_num, ds_c.get_positives(), args.eval_bs, args.num_workers, device)
-            epoch_metrics[f"{cross_name}_R1_4096"] = round(m[4096][1], 2)
-            epoch_metrics[f"{cross_name}_R1_256"] = round(m[256][1], 2)
-            r1_scores.extend([m[4096][1], m[256][1]])
-
-    # Held-out WashingtonDC validation fallback on Kaggle when external test sets are not mounted
+    # NOTE (CVPR Strict Hygiene): SPED & AmsterTime TEST sets are NEVER used for checkpoint selection!
+    # Held-out WashingtonDC validation fallback on Kaggle when Pitts30k-val / MSLS-val are not mounted
     if not r1_scores and getattr(args, "_gsv_dir", None):
         wash_csv = os.path.join(args._gsv_dir, "Dataframes", "WashingtonDC.csv")
         if os.path.isfile(wash_csv):
-            gsv_hold = GSVCitiesDataset(dataset_path=args._gsv_dir, cities=["WashingtonDC"], img_per_place=2)
+            gsv_hold = GSVCitiesDataset(dataset_path=args._gsv_dir, cities=["WashingtonDC"], img_per_place=2, transform=eval_tf)
             n_places = min(len(gsv_hold), 500)
             # Fix deterministic RNG seed for held-out validation so epoch-to-epoch comparison is exact!
             rng_state = random.getstate()
@@ -199,10 +191,17 @@ def run_universal_validation(model, args: argparse.Namespace, epoch: int, device
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Unified G3-VPR v2 Training & Ablation Runner")
-    p.add_argument("--ablation", type=str, default="M5_full", choices=["M1", "M2", "M3", "M4", "M5_full"])
+    p = argparse.ArgumentParser(description="Unified G3-VPR v3 (CVPR) Training & Ablation Runner")
+    p.add_argument(
+        "--ablation",
+        type=str,
+        default="M5_full",
+        choices=["M1", "M2a", "M2b", "M2", "M3", "M4a", "M4b", "M4c", "M4", "M5_full"],
+    )
     p.add_argument("--gsv_path", type=str, default=None, help="Path to GSV-Cities root")
     p.add_argument("--cities", type=str, default="all", help="Comma-separated cities or 'all'")
+    p.add_argument("--img_size", type=int, default=224, help="Input resolution (224 or 322)")
+    p.add_argument("--no_aug", action="store_true", help="Disable RandAugment+Grayscale training augmentation")
     p.add_argument("--max_places", type=int, default=0, help="Optional cap on places per epoch (resampled each epoch!)")
     p.add_argument("--img_per_place", type=int, default=4)
     p.add_argument("--bs", type=int, default=32, help="Places per batch (total images = bs * img_per_place)")
@@ -226,6 +225,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lambda_rel_2d", type=float, default=2.0)
     p.add_argument("--lambda_3d", type=float, default=0.5)
     p.add_argument("--lambda_proto", type=float, default=0.05)
+    p.add_argument("--lambda_csd", type=float, default=0.25)
 
     p.add_argument("--val_pitts30k", type=str, default="./datasets/pitts30k-val")
     p.add_argument("--val_msls", type=str, default="./datasets/msls-val")
@@ -295,7 +295,10 @@ def main() -> None:
         if not cities:
             cities = [c for c in all_csvs if c != "WashingtonDC"] if len(all_csvs) > 1 else "all"
 
-    base_gsv_ds = GSVCitiesDataset(dataset_path=gsv_dir, cities=cities, img_per_place=args.img_per_place)
+    train_tf = build_eval_transform(args.img_size) if args.no_aug else build_train_transform(args.img_size)
+    base_gsv_ds = GSVCitiesDataset(
+        dataset_path=gsv_dir, cities=cities, img_per_place=args.img_per_place, transform=train_tf
+    )
 
     cfg = G3VPRConfig.from_ablation(
         ablation=args.ablation,
@@ -322,24 +325,29 @@ def main() -> None:
         best_universal_score = float(ckpt.get("best_universal_score", -1.0))
         print(f"[Resumed from {args.resume_ckpt} at epoch {start_epoch}]")
 
-    use_matryoshka = cfg.ablation.upper() == "M5_FULL"
-    use_distill = cfg.ablation.upper() in ("M4", "M5_FULL")
+    abl_u = cfg.ablation.upper()
+    use_matryoshka = abl_u == "M5_FULL"
+    use_2d_kd = abl_u in ("M4", "M4A", "M4C", "M5_FULL") and args.teacher_2d != "none"
+    use_3d_kd = abl_u in ("M4", "M4B", "M4C", "M5_FULL") and args.teacher_3d != "none"
     teacher_dim = 10752 if args.teacher_2d.lower() == "cricavpr" else 8448
     criterion = UnifiedG3VPRLoss(
         use_matryoshka=use_matryoshka,
-        lambda_rel_2d=args.lambda_rel_2d if use_distill else 0.0,
-        lambda_3d=args.lambda_3d if use_distill else 0.0,
+        lambda_rel_2d=args.lambda_rel_2d if use_2d_kd else 0.0,
+        lambda_3d=args.lambda_3d if use_3d_kd else 0.0,
         lambda_proto=args.lambda_proto if cfg.use_pmci else 0.0,
+        lambda_csd=args.lambda_csd if use_matryoshka else 0.0,
         teacher_2d_dim=teacher_dim,
     ).to(device)
 
     teacher_engine: Optional[DualTeacherEngine] = None
-    if use_distill and (args.teacher_2d != "none" or args.teacher_3d != "none"):
+    if use_2d_kd or use_3d_kd:
         teacher_dev = "cuda:1" if (torch.cuda.is_available() and torch.cuda.device_count() > 1) else device
-        print(f"[Loading Frozen Teachers ({args.teacher_2d}, {args.teacher_3d}) on {teacher_dev}]")
+        t2d_name = args.teacher_2d if use_2d_kd else "none"
+        t3d_name = args.teacher_3d if use_3d_kd else "none"
+        print(f"[Loading Frozen Teachers ({t2d_name}, {t3d_name}) on {teacher_dev}]")
         teacher_engine = DualTeacherEngine(
-            teacher_2d=args.teacher_2d,
-            teacher_3d=args.teacher_3d,
+            teacher_2d=t2d_name,
+            teacher_3d=t3d_name,
             cricavpr_ckpt=args.cricavpr_ckpt,
             device=teacher_dev,
             use_fp16=True,

@@ -1,7 +1,6 @@
 import base64
 import io
 import json
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -23,6 +22,7 @@ include_files = [
     "train_g3vpr.py",
     "eval_g3vpr_sota.py",
     "eval_ablation_suite.py",
+    "eval_cvpr_v3_suite.py",
     "requirements.txt",
 ]
 
@@ -56,7 +56,7 @@ def main() -> None:
 
     cell1_source = (
         [
-            "# Cell 1: Tu dong giai nen toan bo code G3-VPR v2 ngay trong Kaggle/Colab\n",
+            "# Cell 1: Tu dong giai nen toan bo code G3-VPR v3 (CVPR All-in-One) ngay trong Kaggle/Colab\n",
             "import base64, io, os, subprocess, sys, tarfile, torch\n",
             "\n",
             'WORK_ROOT = "/kaggle/working/D2VPR" if os.path.isdir("/kaggle/working") else os.path.abspath("./D2VPR_cloud")\n',
@@ -70,7 +70,7 @@ def main() -> None:
             'with tarfile.open(fileobj=io.BytesIO(base64.b64decode(ARCHIVE_B64)), mode="r:gz") as tf:\n',
             "    tf.extractall(WORK_ROOT)\n",
             "os.chdir(WORK_ROOT)\n",
-            'print("[OK] Da giai nen toan bo du an G3-VPR v2 tai:", os.getcwd())\n',
+            'print("[OK] Da giai nen toan bo du an G3-VPR v3 (CVPR) tai:", os.getcwd())\n',
             'print("PyTorch:", torch.__version__, "| CUDA GPU:", torch.cuda.is_available(), "| So GPU:", torch.cuda.device_count())\n',
             "if not torch.cuda.is_available():\n",
             '    print("CANH BAO: Ban chua bat GPU! Vao Settings ben phai -> Accelerator -> chon GPU T4 x2 va bat Internet ON!")\n',
@@ -81,7 +81,7 @@ def main() -> None:
             'subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "-q", "torchaudio"], check=False)\n',
             'subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "pytorch-metric-learning"], check=True)\n',
             'subprocess.run([sys.executable, "-m", "pip", "install", "-q", "faiss-cpu"], check=True)\n',
-            'print("[OK] Moi truong thu vien da san sang 100%!")',
+            'print("[OK] Moi truong thu vien G3-VPR v3 da san sang 100%!")',
         ]
     )
 
@@ -91,16 +91,16 @@ def main() -> None:
                 "cell_type": "markdown",
                 "metadata": {},
                 "source": [
-                    "# G3-VPR v2: Notebook Huấn Luyện SOTA & Ablation Tự Động 100% Trên Kaggle (`T4 x2`)\n",
-                    "**Bản nâng cấp v2 đã tích hợp:**\n",
-                    "- **Isometric Multi-Scale Orthogonal Matryoshka Head** & **Symmetric Signed GeM** (bảo toàn 100% không gian đặc trưng).\n",
-                    "- **MatryoshkaTeacherBridge (`MegaLoc` 8448-D Direct Subspace) + Negative-Masked Geodesic Relational Distillation**.\n",
-                    "- **Khởi động ấm thân mạng `ViT-S + MulConvAdapter`** tự động tải từ GitHub + **Bảng Ablation `M1 -> M5_full` thuần Python**.\n",
+                    "# G3-VPR v3 (CVPR A*): Train + Ablation + Chấm SOTA + G-OTR + Conformal Cascade 100% Trên Kaggle (`T4 x2`)\n",
+                    "**Toàn bộ nâng cấp chuẩn CVPR trong bản `v3`:**\n",
+                    "- **Vá lỗi v2:** Bật `RandAugment + RandomGrayscale (20%) + ColorJitter` (khắc phục hoàn toàn lỗi rớt `AmsterTime`) + **cấm tuyệt đối rò rỉ tập Test** lúc chọn checkpoint.\n",
+                    "- **3 Đột phá hợp nhất:** `G-OTR` (xác minh hình học 3D Top-20 không tốn FLOPs backbone), `Nyström-PMCI` (trừ nhiễu miền + SwAV chống chết nguyên mẫu), và `AM-VPR Conformal Cascade` (`CSD` + thoát sớm bảo chứng rủi ro).\n",
+                    "- **Chấm điểm trực tiếp trên Kaggle:** Tự động chấm `G3-VPR v3` (`128..4096-D + G-OTR + Cascade`), so sánh **SOTA (`MegaLoc`, `DINOv2-SALAD`, `EigenPlaces`) ở `BS=1`**, chấm bảng **Ablation đồng ngân sách**, đo **FAISS 1M**, và xuất sẵn báo cáo **`CVPR_V3_SUMMARY_REPORT.md`** trong file ZIP Output!\n",
                     "\n",
                     "**Cách chạy trên Kaggle:**\n",
-                    "1. Ở **Settings** bên phải: chọn **Accelerator -> `GPU T4 x2`** và bật **Internet -> `ON`**.\n",
-                    "2. Ở **Input** bên phải: bấm **`+ Add Input`** -> gắn **`amaralibey/gsv-cities`**.\n",
-                    "3. Bấm **`Save Version` -> `Save & Run All (Commit)`**!",
+                    "1. **Settings** bên phải: chọn **Accelerator → `GPU T4 x2`** và bật **Internet → `ON`**.\n",
+                    "2. **Input** bên phải: bấm **`+ Add Input`** → gắn **`amaralibey/gsv-cities`** (nếu bạn có gắn thêm `pitts30k` / `sped` / `amstertime` / `msls` thì Cell 6 sẽ tự nhận và chấm luôn!).\n",
+                    "3. Bấm **`Save Version` → `Save & Run All (Commit)`** rồi tải file `g3vpr_paper_artifacts_v3.zip` về đối chiếu!",
                 ],
             },
             {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": cell1_source},
@@ -110,7 +110,7 @@ def main() -> None:
                 "metadata": {},
                 "outputs": [],
                 "source": [
-                    "# Cell 2: Tai trong so khoi dong am ViT-S+Adapter (v2), DINOv2-S & Tu dong tim GSV-Cities\n",
+                    "# Cell 2: Tai trong so khoi dong am ViT-S+Adapter, DINOv2-S & Tu dong tim GSV-Cities + VPR test sets\n",
                     "import os, urllib.request\n",
                     'if os.path.isdir("/kaggle/working/D2VPR"):\n',
                     '    os.chdir("/kaggle/working/D2VPR")\n',
@@ -118,11 +118,10 @@ def main() -> None:
                     'os.makedirs("./weights_init", exist_ok=True)\n',
                     'warm_ckpt = "./weights_init/vits_adapter_warmstart_fp16.pt"\n',
                     "if not os.path.isfile(warm_ckpt):\n",
-                    "    warm_urls = [\n",
+                    "    for u in [\n",
                     '        "https://raw.githubusercontent.com/phuccode25/G3-VPR/main/weights_init/vits_adapter_warmstart_fp16.pt",\n',
                     '        "https://github.com/phuccode25/G3-VPR/raw/main/weights_init/vits_adapter_warmstart_fp16.pt",\n',
-                    "    ]\n",
-                    "    for u in warm_urls:\n",
+                    "    ]:\n",
                     "        try:\n",
                     '            print("Dang tai trong so khoi dong am ViT-S+Adapter tu:", u)\n',
                     "            urllib.request.urlretrieve(u, warm_ckpt)\n",
@@ -130,7 +129,7 @@ def main() -> None:
                     "                break\n",
                     "        except Exception as e:\n",
                     '            print("Thu URL tiep theo do:", e)\n',
-                    'print("[OK] Warm-start ViT-S san sang:", os.path.isfile(warm_ckpt), f"({os.path.getsize(warm_ckpt)/1e6:.1f} MB)" if os.path.isfile(warm_ckpt) else "")\n',
+                    'print("[OK] Warm-start ViT-S:", os.path.isfile(warm_ckpt))\n',
                     "\n",
                     'dinov2_ckpt = "./dinov2_vits14_pretrain.pth"\n',
                     "if not os.path.isfile(dinov2_ckpt):\n",
@@ -139,7 +138,7 @@ def main() -> None:
                     '        "https://dl.fbaipublicfiles.com/dinov2/dinov2_vits14/dinov2_vits14_pretrain.pth",\n',
                     "        dinov2_ckpt\n",
                     "    )\n",
-                    'print("[OK] DINOv2-S san sang:", os.path.isfile(dinov2_ckpt))\n',
+                    'print("[OK] DINOv2-S:", os.path.isfile(dinov2_ckpt))\n',
                     "\n",
                     "GSV_PATH = None\n",
                     'if os.path.isdir("/kaggle/input"):\n',
@@ -159,7 +158,7 @@ def main() -> None:
                 "metadata": {},
                 "outputs": [],
                 "source": [
-                    "# Cell 3: Kiem tra nhanh kien truc G3-VPR v2, tinh bat bien BS=1 & toc do GPU\n",
+                    "# Cell 3: Kiem tra kien truc G3-VPR v3 (Nystrom-PMCI + G-OTR), tinh bat bien BS=1 & toc do GPU T4\n",
                     "import os, subprocess, sys\n",
                     'if os.path.isdir("/kaggle/working/D2VPR"):\n',
                     '    os.chdir("/kaggle/working/D2VPR")\n',
@@ -172,7 +171,7 @@ def main() -> None:
                 "metadata": {},
                 "outputs": [],
                 "source": [
-                    "# Cell 4: Huan luyen Mo hinh Chinh G3-VPR v2 (M5_full) voi Dual Teachers (MegaLoc 2D + Depth-Anything-V2 3D)\n",
+                    "# Cell 4: Huan luyen Mo hinh Chinh G3-VPR v3 (M5_full) voi Data Aug + Nystrom-PMCI + CSD + Dual Teachers\n",
                     "import os, subprocess, sys\n",
                     'if os.path.isdir("/kaggle/working/D2VPR"):\n',
                     '    os.chdir("/kaggle/working/D2VPR")\n',
@@ -198,9 +197,8 @@ def main() -> None:
                     'if os.path.isfile(f"{SAVE_DIR}/g3vpr_last.pth"):\n',
                     '    cmd.extend(["--resume_ckpt", f"{SAVE_DIR}/g3vpr_last.pth"])\n',
                     "\n",
-                    'print("Running M5_full:", " ".join(cmd))\n',
+                    'print("Running G3-VPR v3 M5_full:", " ".join(cmd))\n',
                     "subprocess.run(cmd, stdin=subprocess.DEVNULL, check=True)\n",
-                    '# Xoa file last.pth nang de tiet kiem o dia cho Cell 5\n',
                     'if os.path.isfile(f"{SAVE_DIR}/g3vpr_last.pth"):\n',
                     '    os.remove(f"{SAVE_DIR}/g3vpr_last.pth")',
                 ],
@@ -211,22 +209,32 @@ def main() -> None:
                 "metadata": {},
                 "outputs": [],
                 "source": [
-                    "# Cell 5: Chay Bang Ablation Study Thuan Python 100% (Table 4: M1 -> M2 -> M3 -> M4)\n",
+                    "# Cell 5: Bang Ablation Dong Ngan Sach & Tach Sach Bien (CVPR Table 4: 4 ep x 6000 places cho moi dong)\n",
                     "import os, subprocess, sys\n",
                     'if os.path.isdir("/kaggle/working/D2VPR"):\n',
                     '    os.chdir("/kaggle/working/D2VPR")\n',
                     "\n",
-                    'for abl in ["M1", "M2", "M3", "M4"]:\n',
-                    '    out_d = f"./checkpoints/ablation_{abl}"\n',
-                    '    use_distill = (abl == "M4")\n',
+                    "ABLATION_SPECS = [\n",
+                    '    ("M1", "M1", "none", "none", False),\n',
+                    '    ("M2a_GatedDRM", "M2a", "none", "none", False),\n',
+                    '    ("M2b_3DDGSA", "M2b", "none", "none", False),\n',
+                    '    ("M3_NystromPMCI", "M3", "none", "none", False),\n',
+                    '    ("M4a_2DKD_only", "M4a", "megaloc", "none", False),\n',
+                    '    ("M4b_3DKD_only", "M4b", "none", "depth_anything_v2", False),\n',
+                    '    ("M4c_DualKD", "M4c", "megaloc", "depth_anything_v2", False),\n',
+                    '    ("M5_EqBudget", "M5_full", "megaloc", "depth_anything_v2", False),\n',
+                    '    ("M5_NoWarmStart", "M5_full", "megaloc", "depth_anything_v2", True),\n',
+                    "]\n",
+                    "for tag, abl_cfg, t2d, t3d, no_ws in ABLATION_SPECS:\n",
+                    '    out_d = f"./checkpoints/ablation_{tag}"\n',
                     "    abl_cmd = [\n",
                     '        sys.executable, "-u", "train_g3vpr.py",\n',
-                    '        "--ablation", abl,\n',
+                    '        "--ablation", abl_cfg,\n',
                     '        "--gsv_path", GSV_PATH,\n',
                     '        "--cities", "all",\n',
                     '        "--dinov2_path", "./dinov2_vits14_pretrain.pth",\n',
-                    '        "--teacher_2d", "megaloc" if use_distill else "none",\n',
-                    '        "--teacher_3d", "depth_anything_v2" if use_distill else "none",\n',
+                    '        "--teacher_2d", t2d,\n',
+                    '        "--teacher_3d", t3d,\n',
                     '        "--bs", "32",\n',
                     '        "--grad_accum", "2",\n',
                     '        "--epochs", "4",\n',
@@ -235,11 +243,12 @@ def main() -> None:
                     '        "--unfreeze_last_n", "6",\n',
                     '        "--save_dir", out_d,\n',
                     "    ]\n",
-                    '    if os.path.isfile("./weights_init/vits_adapter_warmstart_fp16.pt"):\n',
+                    "    if no_ws:\n",
+                    '        abl_cmd.append("--no_warmstart")\n',
+                    '    elif os.path.isfile("./weights_init/vits_adapter_warmstart_fp16.pt"):\n',
                     '        abl_cmd.extend(["--warmstart_ckpt", "./weights_init/vits_adapter_warmstart_fp16.pt"])\n',
-                    '    print(f"\\n=== Running Ablation {abl} ===")\n',
+                    '    print(f"\\n=== Running Equal-Budget Ablation {tag} ({abl_cfg}, 2D={t2d}, 3D={t3d}, no_ws={no_ws}) ===")\n',
                     "    subprocess.run(abl_cmd, stdin=subprocess.DEVNULL, check=True)\n",
-                    "    # Giu lai g3vpr_best_fp16.pth (~68 MB) + training_metrics.json, dọn file fp32 trung gian\n",
                     '    for rm_fn in ("g3vpr_last.pth", "g3vpr_universal_best.pth"):\n',
                     '        p_rm = os.path.join(out_d, rm_fn)\n',
                     "        if os.path.isfile(p_rm):\n",
@@ -252,7 +261,7 @@ def main() -> None:
                 "metadata": {},
                 "outputs": [],
                 "source": [
-                    "# Cell 6: Danh gia BS=1 Matryoshka (128D..4096D), ve Hinh 4 & Dong goi ZIP ket qua v2!\n",
+                    "# Cell 6: CHAM DIEM TRUC TIEP TREN KAGGLE (G3-VPR v3 + G-OTR + Conformal Cascade + SOTA Hub + Ablations + FAISS 1M)\n",
                     "import os, shutil, subprocess, sys\n",
                     'if os.path.isdir("/kaggle/working/D2VPR"):\n',
                     '    os.chdir("/kaggle/working/D2VPR")\n',
@@ -260,17 +269,26 @@ def main() -> None:
                     'm5_ckpt = "./checkpoints/g3vpr_M5_full/g3vpr_universal_best.pth"\n',
                     "if os.path.isfile(m5_ckpt):\n",
                     "    subprocess.run([\n",
-                    '        sys.executable, "-u", "eval_g3vpr_sota.py",\n',
+                    '        sys.executable, "-u", "eval_cvpr_v3_suite.py",\n',
                     '        "--ckpt", m5_ckpt,\n',
+                    '        "--checkpoints_dir", "./checkpoints",\n',
                     '        "--query_bs", "1",\n',
-                    '        "--output_json", "./results/g3vpr_sota_eval.json",\n',
+                    '        "--run_sota_hub",\n',
+                    '        "--run_faiss_1m",\n',
+                    '        "--output_dir", "./results",\n',
                     "    ], check=True)\n",
                     "    subprocess.run([\n",
                     '        sys.executable, "-u", "experiments/visualize_gaussians.py",\n',
                     '        "--ckpt", m5_ckpt,\n',
                     "    ], check=True)\n",
                     "\n",
-                    'zip_out = "/kaggle/working/g3vpr_paper_artifacts_v2" if os.path.isdir("/kaggle/working") else "./g3vpr_paper_artifacts_v2"\n',
+                    '    report_md = "./results/CVPR_V3_SUMMARY_REPORT.md"\n',
+                    "    if os.path.isfile(report_md):\n",
+                    '        print("\\n" + "=" * 80)\n',
+                    '        print(open(report_md, encoding="utf-8").read())\n',
+                    '        print("=" * 80)\n',
+                    "\n",
+                    'zip_out = "/kaggle/working/g3vpr_paper_artifacts_v3" if os.path.isdir("/kaggle/working") else "./g3vpr_paper_artifacts_v3"\n',
                     'shutil.rmtree("./export_bundle", ignore_errors=True)\n',
                     'os.makedirs("./export_bundle/results", exist_ok=True)\n',
                     'os.makedirs("./export_bundle/checkpoints/g3vpr_M5_full", exist_ok=True)\n',
@@ -282,11 +300,10 @@ def main() -> None:
                     "    if os.path.isfile(src_p):\n",
                     '        shutil.copy2(src_p, f"./export_bundle/checkpoints/g3vpr_M5_full/{main_fn}")\n',
                     "\n",
-                    '# Sao chep day du trong so fp16 + JSON cua M1..M4 de cham SOTA tren SPED/AmsterTime/Pitts30k o may local!\n',
-                    'for abl in ("M1", "M2", "M3", "M4"):\n',
-                    '    abl_src = f"./checkpoints/ablation_{abl}"\n',
-                    "    if os.path.isdir(abl_src):\n",
-                    '        abl_dst = f"./export_bundle/checkpoints/ablation_{abl}"\n',
+                    'for entry in sorted(os.listdir("./checkpoints")):\n',
+                    '    if entry.startswith("ablation_"):\n',
+                    '        abl_src = os.path.join("./checkpoints", entry)\n',
+                    '        abl_dst = os.path.join("./export_bundle/checkpoints", entry)\n',
                     "        os.makedirs(abl_dst, exist_ok=True)\n",
                     '        for fn in ("g3vpr_best_fp16.pth", "training_metrics.json"):\n',
                     "            fp = os.path.join(abl_src, fn)\n",
@@ -294,7 +311,7 @@ def main() -> None:
                     "                shutil.copy2(fp, os.path.join(abl_dst, fn))\n",
                     "\n",
                     'archive_file = shutil.make_archive(zip_out, "zip", "./export_bundle")\n',
-                    'print("[HOAN TAT V2] Tai file ket qua tai muc Output ben phai:", archive_file)',
+                    'print("[HOAN TAT G3-VPR V3] Tai file ket qua + bao cao doi chieu tai Output:", archive_file)',
                 ],
             },
         ],
@@ -316,11 +333,11 @@ def main() -> None:
         with tarfile.open(fileobj=io.BytesIO(base64.b64decode(b64_str)), mode="r:gz") as tf:
             tf.extractall(tmpd)
         r1 = subprocess.run([sys.executable, "train_g3vpr.py", "--help"], cwd=tmpd, capture_output=True, text=True)
-        r2 = subprocess.run([sys.executable, "eval_g3vpr_sota.py", "--help"], cwd=tmpd, capture_output=True, text=True)
+        r2 = subprocess.run([sys.executable, "eval_cvpr_v3_suite.py", "--help"], cwd=tmpd, capture_output=True, text=True)
         assert r1.returncode == 0, r1.stderr
         assert r2.returncode == 0, r2.stderr
 
-        # Full isolated E2E training + held-out validation + fp16 checkpoint load test!
+        # Full isolated E2E v3 training + validation + G-OTR + Conformal Cascade + FP16 checkpoint verification!
         import pandas as pd
         from PIL import Image
 
@@ -329,13 +346,13 @@ def main() -> None:
         for city in ("London", "WashingtonDC"):
             (mock_gsv / "Images" / city).mkdir(parents=True)
             rows = []
-            for pid in range(1, 7):
+            for pid in range(1, 25):
                 for v in range(4):
                     pano = f"pano{pid}_{v}"
                     yr, mo, nd, lat, lon = 2022, 5, 90 * v, "51.5", "-0.1"
                     pl_str = str(pid).zfill(7)
                     fn = f"{city}_{pl_str}_{str(yr).zfill(4)}_{str(mo).zfill(2)}_{str(nd).zfill(3)}_{lat}_{lon}_{pano}.jpg"
-                    Image.new("RGB", (64, 64), (pid * 30, v * 50, 120)).save(mock_gsv / "Images" / city / fn)
+                    Image.new("RGB", (64, 64), ((pid * 11) % 255, (v * 50) % 255, 120)).save(mock_gsv / "Images" / city / fn)
                     rows.append({"place_id": pid, "city_id": city, "panoid": pano, "year": yr, "month": mo, "northdeg": nd, "lat": lat, "lon": lon})
             pd.DataFrame(rows).to_csv(mock_gsv / "Dataframes" / f"{city}.csv", index=False)
 
@@ -348,7 +365,7 @@ def main() -> None:
                 "--no_warmstart",
                 "--teacher_2d", "none",
                 "--teacher_3d", "none",
-                "--bs", "2",
+                "--bs", "4",
                 "--grad_accum", "2",
                 "--epochs", "1",
                 "--num_workers", "0",
@@ -358,10 +375,27 @@ def main() -> None:
             capture_output=True,
             text=True,
         )
-        assert r3.returncode == 0, f"E2E train failed:\nSTDOUT:\n{r3.stdout}\nSTDERR:\n{r3.stderr}"
+        assert r3.returncode == 0, f"E2E v3 train failed:\nSTDOUT:\n{r3.stdout}\nSTDERR:\n{r3.stderr}"
         assert (Path(tmpd) / "ckpts" / "g3vpr_universal_best.pth").is_file(), "Checkpoint was not created!"
         assert (Path(tmpd) / "ckpts" / "g3vpr_best_fp16.pth").is_file(), "FP16 Checkpoint was not created!"
-        print("Isolated fresh-directory E2E v2 Training + Validation + FP16 Checkpoint Verification PASSED 100%!")
+
+        r4 = subprocess.run(
+            [
+                sys.executable,
+                "eval_cvpr_v3_suite.py",
+                "--ckpt", str(Path(tmpd) / "ckpts" / "g3vpr_universal_best.pth"),
+                "--datasets_root", str(mock_gsv),
+                "--query_bs", "1",
+                "--output_dir", str(Path(tmpd) / "res_v3"),
+            ],
+            cwd=tmpd,
+            capture_output=True,
+            text=True,
+        )
+        assert r4.returncode == 0, f"E2E v3 eval failed:\nSTDOUT:\n{r4.stdout}\nSTDERR:\n{r4.stderr}"
+        assert (Path(tmpd) / "res_v3" / "cvpr_v3_full_results.json").is_file(), "v3 JSON missing!"
+        assert (Path(tmpd) / "res_v3" / "CVPR_V3_SUMMARY_REPORT.md").is_file(), "v3 MD report missing!"
+        print("Isolated fresh-directory E2E v3 Training + G-OTR + Conformal Cascade + Report Verification PASSED 100%!")
 
 
 if __name__ == "__main__":

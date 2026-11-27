@@ -37,11 +37,31 @@ import torchvision.transforms as T
 
 
 # Pure PIL + standard torchvision transforms (avoids C++ torchvision.io extension version conflicts)
-default_transform = T.Compose([
-    T.Resize((224, 224)),
-    T.ToTensor(),
-    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
+def build_eval_transform(img_size: int = 224):
+    return T.Compose([
+        T.Resize((img_size, img_size)),
+        T.ToTensor(),
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+
+def build_train_transform(img_size: int = 224):
+    """
+    Domain-invariant training augmentation for G3-VPR v3:
+    Prevents RGB color overfitting on GSV-Cities and generalizes to grayscale/historical
+    (AmsterTime), night/weather (SVOX/Tokyo24/7), and seasonal (SPED/Nordland) shifts.
+    """
+    return T.Compose([
+        T.Resize((img_size, img_size)),
+        T.RandAugment(num_ops=3, magnitude=9),
+        T.RandomGrayscale(p=0.20),
+        T.ColorJitter(brightness=0.30, contrast=0.30, saturation=0.30, hue=0.08),
+        T.ToTensor(),
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+
+default_transform = build_eval_transform(224)
 
 
 # NOTE: you can download the GSV-Cities dataset using the scripts we borrowed from 

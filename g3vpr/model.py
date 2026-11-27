@@ -50,16 +50,25 @@ class G3VPRConfig:
                 pretrained_dinov2_path=pretrained_dinov2_path,
                 warmstart_d2vpr_ckpt=warmstart_d2vpr_ckpt,
             )
-        elif ablation == "M2":
+        elif ablation == "M2A":
             return cls(
-                ablation="M2",
+                ablation="M2a",
+                use_gated_drm=True,
+                allow_gaussian_rotation=False,
+                use_pmci=False,
+                pretrained_dinov2_path=pretrained_dinov2_path,
+                warmstart_d2vpr_ckpt=warmstart_d2vpr_ckpt,
+            )
+        elif ablation in ("M2", "M2B"):
+            return cls(
+                ablation="M2b" if ablation == "M2B" else "M2",
                 use_gated_drm=True,
                 allow_gaussian_rotation=True,
                 use_pmci=False,
                 pretrained_dinov2_path=pretrained_dinov2_path,
                 warmstart_d2vpr_ckpt=warmstart_d2vpr_ckpt,
             )
-        elif ablation in ("M3", "M4"):
+        elif ablation in ("M3", "M4", "M4A", "M4B", "M4C"):
             return cls(
                 ablation=ablation,
                 use_gated_drm=True,
@@ -182,10 +191,12 @@ class G3VPR(nn.Module):
 
         tokens = agg_out["tokens"]
         prototypes_norm = None
+        proto_assign = None
         if self.pmci is not None:
             pmci_out = self.pmci(tokens)
             tokens = pmci_out["tokens"]
             prototypes_norm = pmci_out["prototypes_norm"]
+            proto_assign = pmci_out.get("proto_assign", None)
 
         descriptor, nested_descriptors = self.head(tokens, output_dim=dim)
 
@@ -201,8 +212,12 @@ class G3VPR(nn.Module):
             "mu": agg_out["mu"],
             "sigma": agg_out["sigma"],
             "theta": agg_out["theta"],
+            "mean_depth": agg_out["mean_depth"],
+            "mean_sal": agg_out["mean_sal"],
+            "splat_tokens": tokens[:, 1:, :],
             "splat_weights": agg_out["splat_weights"],
             "prototypes_norm": prototypes_norm,
+            "proto_assign": proto_assign,
         }
 
 

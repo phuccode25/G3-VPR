@@ -26,6 +26,8 @@ test/
 # Temporary export bundles (keep lightweight code zip if needed, ignore large dataset zips)
 export_bundle/
 g3vpr_paper_artifacts/
-g3vpr_paper_artifacts.zip
+g3vpr_paper_artifacts_v2/
+g3vpr_paper_artifacts_v3/
+g3vpr_paper_artifacts*.zip
 !weights_init/
 !weights_init/vits_adapter_warmstart_fp16.pt

@@ -62,6 +62,7 @@ class UnifiedG3VPRLoss(nn.Module):
         lambda_rel_2d: float = 2.0,
         lambda_3d: float = 0.5,
         lambda_proto: float = 0.05,
+        lambda_csd: float = 0.25,
         rel_temp: float = 0.15,
         teacher_2d_dim: int = 8448,
     ):
@@ -71,6 +72,7 @@ class UnifiedG3VPRLoss(nn.Module):
         self.lambda_rel_2d = lambda_rel_2d
         self.lambda_3d = lambda_3d
         self.lambda_proto = lambda_proto
+        self.lambda_csd = lambda_csd
         self.rel_temp = rel_temp
 
         # Standard gold-benchmark VPR Multi-Similarity setup (base=0.5 with CosineSimilarity)
@@ -233,14 +235,60 @@ class UnifiedG3VPRLoss(nn.Module):
         sal_loss = F.smooth_l1_loss(salience_gate.float(), target_sal, beta=0.1)
         return si_depth_loss + struct_aff_loss + 0.5 * sal_loss
 
-    def compute_prototype_diversity_loss(self, prototypes_norm: Optional[torch.Tensor]) -> torch.Tensor:
+    def compute_prototype_diversity_loss(
+        self,
+        prototypes_norm: Optional[torch.Tensor],
+        proto_assign: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         if prototypes_norm is None:
             return torch.tensor(0.0)
         M = prototypes_norm.shape[0]
         gram = torch.matmul(prototypes_norm.float(), prototypes_norm.float().T)
         eye = torch.eye(M, device=gram.device, dtype=gram.dtype)
         off_diag = gram - eye
-        return (off_diag.square().sum()) / (M * (M - 1))
+        ortho_loss = (off_diag.square().sum()) / (M * (M - 1))
+
+        # SwAV-style Sinkhorn Equipartition Regularizer: prevents dead Nystrom prototypes
+        if proto_assign is not None:
+            avg_usage = proto_assign.float().mean(dim=(0, 1)).clamp(min=1e-7)  # [M]
+            uniform_target = torch.full_like(avg_usage, 1.0 / float(M))
+            equi_loss = (avg_usage * (avg_usage.log() - uniform_target.log())).sum()
+            return ortho_loss + 0.5 * equi_loss
+        return ortho_loss
+
+    def compute_cross_scale_self_distillation(
+        self,
+        nested_descriptors: Dict[int, torch.Tensor],
+        temp: float = 0.10,
+    ) -> torch.Tensor:
+        """
+        Cross-Scale Self-Distillation (CSD, 3-line CVPR monotonicity fix):
+        Full 4096-D pairwise similarity distribution teaches all nested prefixes {128..2048}-D
+        so Matryoshka recall is strictly monotonic across dimensions.
+        """
+        if not self.use_matryoshka or len(nested_descriptors) <= 1:
+            return torch.tensor(0.0, device=next(iter(nested_descriptors.values())).device)
+        max_d = max(nested_descriptors.keys())
+        z_full = F.normalize(nested_descriptors[max_d].float(), p=2, dim=-1).detach()
+        B = z_full.shape[0]
+        if B <= 2:
+            return torch.tensor(0.0, device=z_full.device)
+        off_diag = ~torch.eye(B, dtype=torch.bool, device=z_full.device)
+        sim_full = (torch.matmul(z_full, z_full.T) / temp).masked_fill(~off_diag, -1e9)
+        p_full = F.softmax(sim_full, dim=-1).masked_fill(~off_diag, 0.0).detach()
+
+        csd_sum = torch.tensor(0.0, device=z_full.device)
+        count = 0
+        for d, z_d in nested_descriptors.items():
+            if d == max_d:
+                continue
+            z_dn = F.normalize(z_d.float(), p=2, dim=-1)
+            sim_d = (torch.matmul(z_dn, z_dn.T) / temp).masked_fill(~off_diag, -1e9)
+            lp_d = F.log_softmax(sim_d, dim=-1)
+            kl = (p_full[off_diag] * (p_full[off_diag].clamp(min=1e-8).log() - lp_d[off_diag])).sum() / float(B)
+            csd_sum = csd_sum + temp * kl
+            count += 1
+        return csd_sum / max(count, 1)
 
     def forward(
         self,
@@ -274,9 +322,18 @@ class UnifiedG3VPRLoss(nn.Module):
                 else torch.tensor(0.0, device=device)
             )
             proto_tensor = model_out.get("prototypes_norm", None)
+            proto_assign = model_out.get("proto_assign", None)
             loss_proto = (
-                self.compute_prototype_diversity_loss(proto_tensor.float())  # type: ignore
+                self.compute_prototype_diversity_loss(
+                    proto_tensor.float(),  # type: ignore
+                    proto_assign.float() if proto_assign is not None else None,  # type: ignore
+                )
                 if proto_tensor is not None and self.lambda_proto > 0
+                else torch.tensor(0.0, device=device)
+            )
+            loss_csd = (
+                self.compute_cross_scale_self_distillation(nested)
+                if self.use_matryoshka and self.lambda_csd > 0
                 else torch.tensor(0.0, device=device)
             )
 
@@ -285,6 +342,7 @@ class UnifiedG3VPRLoss(nn.Module):
                 + self.lambda_rel_2d * loss_rel
                 + self.lambda_3d * loss_3d
                 + self.lambda_proto * loss_proto
+                + self.lambda_csd * loss_csd
             )
         return {
             "loss": total,
@@ -292,4 +350,5 @@ class UnifiedG3VPRLoss(nn.Module):
             "loss_rel_2d": loss_rel.detach(),
             "loss_3d": loss_3d.detach(),
             "loss_proto": loss_proto.detach(),
+            "loss_csd": loss_csd.detach(),
         }

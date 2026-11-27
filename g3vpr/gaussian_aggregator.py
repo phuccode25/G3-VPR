@@ -221,8 +221,11 @@ class Vectorized3DGaussianAggregator(nn.Module):
 
         return {
             "tokens": tokens,                    # [B, K + 1, D]
+            "splat_feats": splat_feats_f32.to(dtype),  # [B, K, D]
             "mu": mu,                            # [B, K, 2]
             "sigma": sigma,                      # [B, K, 2]
             "theta": theta,                      # [B, K]
+            "mean_depth": mean_depth,            # [B, K, 1]
+            "mean_sal": mean_sal,                # [B, K, 1]
             "splat_weights": norm_weights,       # [B, K, N_p]
         }
