@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from backbone.vision_transformer_small import vit_small
+from backbone.vision_transformer import vit_base
 
 
 def _patch_adapter_dynamic_hw(adapter: nn.Module) -> None:
@@ -75,11 +76,16 @@ class GeoSemanticGatedBackbone(nn.Module):
         shallow_layers: Sequence[int] = (2, 4),
         deep_layers: Sequence[int] = (8, 12),
         use_gated_drm: bool = True,
+        backbone_arch: str = "dinov2_vits14",
         pretrained_dinov2_path: Optional[str] = None,
         warmstart_d2vpr_ckpt: Optional[str] = None,
     ):
         super().__init__()
-        self.vit = vit_small(patch_size=14, img_size=518, init_values=1, block_chunks=0)
+        self.backbone_arch = backbone_arch.lower()
+        if self.backbone_arch in ("dinov2_vitb14", "vitb14", "vit_b"):
+            self.vit = vit_base(patch_size=14, img_size=518, init_values=1, block_chunks=0)
+        else:
+            self.vit = vit_small(patch_size=14, img_size=518, init_values=1, block_chunks=0)
         if hasattr(self.vit, "lin"):
             del self.vit.lin
         if hasattr(self.vit, "up_norm"):

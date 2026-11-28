@@ -200,6 +200,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--gsv_path", type=str, default=None, help="Path to GSV-Cities root")
     p.add_argument("--cities", type=str, default="all", help="Comma-separated cities or 'all'")
+    p.add_argument("--backbone_arch", type=str, default="dinov2_vits14", choices=["dinov2_vits14", "dinov2_vitb14"])
     p.add_argument("--img_size", type=int, default=224, help="Input resolution (224 or 322)")
     p.add_argument("--no_aug", action="store_true", help="Disable RandAugment+Grayscale training augmentation")
     p.add_argument("--max_places", type=int, default=0, help="Optional cap on places per epoch (resampled each epoch!)")
@@ -308,7 +309,8 @@ def main() -> None:
     model = build_g3vpr(
         ablation=args.ablation,
         pretrained_dinov2_path=args.dinov2_path,
-        warmstart_d2vpr_ckpt=warmstart_path,
+        warmstart_d2vpr_ckpt=warmstart_path if args.backbone_arch == "dinov2_vits14" else None,
+        backbone_arch=args.backbone_arch,
     ).to(device)
     model.freeze_early_vit_blocks(unfreeze_last_n=args.unfreeze_last_n)
 

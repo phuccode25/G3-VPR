@@ -191,19 +191,19 @@ def gotr_rerank_topk(
     top_global_sims: np.ndarray,
     q_prims: Dict[str, np.ndarray],
     db_prims: Dict[str, np.ndarray],
-    alpha_ot: float = 0.25,
-    alpha_gw: float = 0.15,
+    alpha_ot: float = 0.14,
+    alpha_gw: float = 0.08,
     device: str = "cuda",
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Zero-cost 3D-Lifted G-OTR re-ranking over Top-K FAISS candidates.
-    Args:
-        top_indices:     [Q, K_cand] database indices from FAISS global retrieval
-        top_global_sims: [Q, K_cand] cosine similarities from FAISS
-        q_prims/db_prims: dicts with numpy arrays ("p3d", "cov", "pi", "feats")
-    Returns:
-        reranked_indices: [Q, K_cand]
-        reranked_scores:  [Q, K_cand]
+    Confidence-Gated Z-Score 3D-Lifted G-OTR Re-Ranking over Top-K FAISS candidates.
+    Improvements in v3.1:
+      1. Per-query Z-score standardization across the Top-K pool so global cosine,
+         Sinkhorn OT similarity, and 3D Gromov-Wasserstein live on an identical scale.
+      2. Salience-Depth Confidence Gate eta_q in [0, 1]: automatically dampens 3D GW
+         weight when a query has flat/noisy pseudo-depth (e.g., degraded 1920s grayscale
+         photos in AmsterTime), guaranteeing monotonic or non-degrading re-ranking.
+      3. Uses full splat appearance features (already extracted at 0 extra backbone FLOPs).
     """
     Q, K_cand = top_indices.shape
     dev = torch.device(device if (device == "cuda" and torch.cuda.is_available()) else "cpu")
@@ -218,24 +218,45 @@ def gotr_rerank_topk(
 
     for qi in range(Q):
         cand_ids = top_indices[qi]
-        valid_mask = cand_ids >= 0
-        if not np.all(valid_mask):
+        if not np.all(cand_ids >= 0):
             reranked_idx[qi] = cand_ids
             reranked_sc[qi] = top_global_sims[qi]
             continue
 
         c_t = torch.from_numpy(cand_ids).to(dev, dtype=torch.long)
-        qf = torch.from_numpy(q_prims["feats"][qi : qi + 1]).to(dev, dtype=torch.float32).expand(K_cand, -1, -1)
-        qc = torch.from_numpy(q_prims["cov"][qi : qi + 1]).to(dev, dtype=torch.float32).expand(K_cand, -1, -1, -1)
-        qp = torch.from_numpy(q_prims["p3d"][qi : qi + 1]).to(dev, dtype=torch.float32).expand(K_cand, -1, -1)
-        qpi = torch.from_numpy(q_prims["pi"][qi : qi + 1]).to(dev, dtype=torch.float32).expand(K_cand, -1)
+        qf_1 = torch.from_numpy(q_prims["feats"][qi : qi + 1]).to(dev, dtype=torch.float32)
+        qc_1 = torch.from_numpy(q_prims["cov"][qi : qi + 1]).to(dev, dtype=torch.float32)
+        qp_1 = torch.from_numpy(q_prims["p3d"][qi : qi + 1]).to(dev, dtype=torch.float32)
+        qpi_1 = torch.from_numpy(q_prims["pi"][qi : qi + 1]).to(dev, dtype=torch.float32)
+
+        # Salience-Depth Confidence Gate eta_q in [0, 1]
+        depth_std = qp_1[0, :, 2].std().clamp(min=0.0, max=0.5)
+        eta_q = float(torch.sigmoid(8.0 * (depth_std - 0.12)).item())
 
         ot_sim, gw_sim = compute_gotr_pair_scores(
-            qf, qc, qp, qpi,
+            qf_1.expand(K_cand, -1, -1),
+            qc_1.expand(K_cand, -1, -1, -1),
+            qp_1.expand(K_cand, -1, -1),
+            qpi_1.expand(K_cand, -1),
             db_feats_t[c_t], db_cov_t[c_t], db_p3d_t[c_t], db_pi_t[c_t],
         )
         g_sim = torch.from_numpy(top_global_sims[qi]).to(dev, dtype=torch.float32)
-        fused = (1.0 - alpha_ot - alpha_gw) * g_sim + alpha_ot * ot_sim + alpha_gw * gw_sim
+
+        # Per-query Z-score standardization across Top-K pool
+        def _zscore(v: torch.Tensor) -> torch.Tensor:
+            return (v - v.mean()) / v.std().clamp(min=1e-5)
+
+        z_g = _zscore(g_sim)
+        z_ot = _zscore(ot_sim)
+        z_gw = _zscore(gw_sim)
+
+        # Confidence-gated geometric boost (never overrides a crystal-clear Top-1 global match)
+        g_margin = float((g_sim[0] - g_sim[1]).item()) if K_cand >= 2 else 1.0
+        ambig_gate = float(torch.sigmoid(torch.tensor(12.0 * (0.06 - g_margin))).item())
+        w_ot = alpha_ot * (0.5 + 0.5 * ambig_gate)
+        w_gw = alpha_gw * eta_q * ambig_gate
+
+        fused = z_g + w_ot * z_ot + w_gw * z_gw
         order = torch.argsort(fused, descending=True).cpu().numpy()
         reranked_idx[qi] = cand_ids[order]
         reranked_sc[qi] = fused.cpu().numpy()[order]

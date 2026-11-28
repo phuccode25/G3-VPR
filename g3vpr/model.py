@@ -20,6 +20,7 @@ class G3VPRConfig:
       - M5_full: Full G3-VPR with Matryoshka Elastic Nested Descriptors (128D..4096D)
     """
     ablation: str = "M5_full"
+    backbone_arch: str = "dinov2_vits14"
     feat_dim: int = 512
     num_splats: int = 16
     num_prototypes: int = 128
@@ -101,6 +102,7 @@ class G3VPR(nn.Module):
         self.backbone = GeoSemanticGatedBackbone(
             out_dim=self.cfg.feat_dim,
             use_gated_drm=self.cfg.use_gated_drm,
+            backbone_arch=self.cfg.backbone_arch,
             pretrained_dinov2_path=self.cfg.pretrained_dinov2_path,
             warmstart_d2vpr_ckpt=self.cfg.warmstart_d2vpr_ckpt,
         )
@@ -225,10 +227,12 @@ def build_g3vpr(
     ablation: str = "M5_full",
     pretrained_dinov2_path: Optional[str] = None,
     warmstart_d2vpr_ckpt: Optional[str] = None,
+    backbone_arch: str = "dinov2_vits14",
 ) -> G3VPR:
     cfg = G3VPRConfig.from_ablation(
         ablation=ablation,
         pretrained_dinov2_path=pretrained_dinov2_path,
         warmstart_d2vpr_ckpt=warmstart_d2vpr_ckpt,
     )
+    cfg.backbone_arch = backbone_arch
     return G3VPR(cfg)

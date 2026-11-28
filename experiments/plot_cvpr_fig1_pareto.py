@@ -40,15 +40,20 @@ GRAY_LEGEND = "#E6E6E6"
 def load_verified_metrics() -> dict:
     with open(RESULTS_DIR / "exp2_hardware_profile.json", "r", encoding="utf-8") as f:
         hw = json.load(f)
-    with open(RESULTS_DIR / "g3vpr_v2_sota_pitts.json", "r", encoding="utf-8") as f:
-        pitts = json.load(f)
+    v3_json = ROOT / "results_v3_gotr_fix" / "cvpr_v3_full_results.json"
+    if v3_json.is_file():
+        with open(v3_json, "r", encoding="utf-8") as f:
+            pitts_m5 = json.load(f)["g3vpr_v3"]["pitts30k-val"]["matryoshka"]
+    else:
+        with open(RESULTS_DIR / "g3vpr_v2_sota_pitts.json", "r", encoding="utf-8") as f:
+            pitts_m5 = json.load(f)["results"]["pitts30k-val"]
     with open(RESULTS_DIR / "exp1_diagnostic.json", "r", encoding="utf-8") as f:
         diag = json.load(f)
 
     hw_by_name = {row["model"]: row for row in hw["hardware_efficiency_rows"]}
     return {
         "hw": hw_by_name,
-        "pitts_m5": pitts["results"]["pitts30k-val"],
+        "pitts_m5": pitts_m5,
         "diag": diag["cross_domain_forgetting_matrix"],
     }
 
